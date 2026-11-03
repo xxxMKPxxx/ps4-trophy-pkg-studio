@@ -67,6 +67,26 @@ namespace TrophyUnlocker
             }
         }
 
+        private void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            for (int i = 0; i < gamelist.Count; i++)
+            {
+                comboBox1.Items.Add(gamelist[i].Title);
+            }
+            if (gamelist.Count != 0)
+            {
+                comboBox1.SelectedIndex = 0;
+            }
+
+            pnlProgress.Visible = false;
+        }
+
+        private void comboBox1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            var result = gamelist.Single(s => s.Title == comboBox1.SelectedItem);
+            label8.Text = result.Title;
+        }
+
         public static string AppCommonPath()
         {
             return "x";
@@ -114,7 +134,12 @@ $checks = @(
   @{ N='端口已改为 2121';            Pass = ($p -match ':2121/') },
   @{ N='扫描 user/appmeta/';         Pass = ($p -match '"user/appmeta/"') },
   @{ N='扫描 appmeta/';              Pass = ($p -match '"appmeta/"') },
+  @{ N='扫描 ext0 外置盘';           Pass = ($p -match '"mnt/ext0/user/appmeta/"') },
   @{ N='DoWork 已重写';              Pass = ($p -match '补丁：扫描两个 appmeta 目录') },
+  @{ N='列表先清空';                 Pass = ($p -match '补丁：每次扫描先清空') },
+  @{ N='Items.Clear 只一次';         Pass = (([regex]::Matches($p, 'comboBox1\.Items\.Clear\(\)')).Count -eq 1) },
+  @{ N='Items.Add 只一次';           Pass = (([regex]::Matches($p, 'comboBox1\.Items\.Add')).Count -eq 1) },
+  @{ N='Single 已换 FirstOrDefault'; Pass = ($p -notmatch 'gamelist\.Single\(' -and $p -match 'gamelist\.FirstOrDefault\(') },
   @{ N='已无 splitt 下标';           Pass = ($p -notmatch 'splitt\[\d\]') },
   @{ N='LooksLikeDir 已定义';        Pass = (([regex]::Matches($p, 'private static bool LooksLikeDir')).Count -eq 1) },
   @{ N='LastField 已定义';           Pass = (([regex]::Matches($p, 'private static string LastField')).Count -eq 1) },

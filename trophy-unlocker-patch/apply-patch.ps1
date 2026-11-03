@@ -334,12 +334,17 @@ if ($needDoWorkPatch) {
                 LogLine("=== 主机 " + host + " 开始连接 ===");
                 UpdateProgress("Connecting " + host);
 
-                // 不同固件、不同安装方式（光盘/数字/假 PKG）下，已安装游戏的
-                // appmeta 可能只出现在其中一个目录。原来只扫第一项。
+                // 不同固件、不同安装位置（内置盘 / 外置盘 / USB）下，appmeta 在不同的挂载点。
+                // 原来只扫第一项 —— 装在 /mnt/ext0 上的游戏（日志里出现过 ext0 挂载）全都看不到，
+                // 这就是"列表缺游戏、连日志里都没有"的直接原因。
                 string[] dirs = new string[]
                 {
                     "system_data/priv/appmeta/",
                     "user/appmeta/",
+                    "mnt/ext0/user/appmeta/",
+                    "mnt/ext1/user/appmeta/",
+                    "mnt/usb0/user/appmeta/",
+                    "mnt/usb1/user/appmeta/",
                     "appmeta/"
                 };
 
@@ -350,7 +355,7 @@ if ($needDoWorkPatch) {
                 foreach (string dir in dirs)
                 {
                     string url = root + dir;
-                    int entries = 0, ok = 0;
+                    int entries = 0, ok = 0, raw = 0;
 
                     try
                     {
@@ -368,6 +373,7 @@ if ($needDoWorkPatch) {
                             string line;
                             while ((line = sr.ReadLine()) != null)
                             {
+                                raw++;
                                 if (!LooksLikeDir(line)) continue;
                                 string name = LastField(line);
                                 if (name.Length == 0 || name == "." || name == "..") continue;
@@ -432,7 +438,7 @@ if ($needDoWorkPatch) {
                         LogLine("目录不可用 " + dir + " : " + ex.Message);
                     }
 
-                    LogLine("--- " + dir + " 条目=" + entries + " 成功=" + ok + " ---");
+                    LogLine("--- " + dir + " 原始行=" + raw + " 目录行=" + entries + " 成功=" + ok + " ---");
                 }
 
                 LogLine("=== 完成 条目=" + total + " 加入=" + added + " 重复=" + dup + " 跳过=" + (total - added - dup) + " ===");
@@ -479,6 +485,52 @@ if ($needDoWorkPatch) {
     Write-Ok '已重写 DoWork：三目录扫描、按 TitleId 去重、逐条写日志'
 } else {
     Write-Ok 'DoWork 已是多目录版本，跳过'
+}
+
+# --- 3.57 扫描完成回调：先清空再填充 ---
+# 原实现只有 comboBox1.Items.Add()，从不 Clear。每点一次连接就再累加一遍，
+# 列表里同一个游戏重复 N 次。顺便按标题去重（同名不同区服的条目会让
+# comboBox1_SelectedIndexChanged 里的 gamelist.Single(...) 抛异常）。
+$needUiPatch = ($src -notmatch '补丁：每次扫描先清空')
+if ($needUiPatch) {
+    $newCompleted = @'
+        private void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            // 补丁：每次扫描先清空，否则重复扫描会一直累加
+            comboBox1.Items.Clear();
+
+            System.Collections.Generic.HashSet<string> titles =
+                new System.Collections.Generic.HashSet<string>();
+            for (int i = 0; i < gamelist.Count; i++)
+            {
+                if (!titles.Add(gamelist[i].Title)) continue;
+                comboBox1.Items.Add(gamelist[i].Title);
+            }
+            LogLine("界面加入 " + comboBox1.Items.Count + " 条（gamelist=" + gamelist.Count + "）");
+
+            if (gamelist.Count != 0)
+            {
+                comboBox1.SelectedIndex = 0;
+            }
+
+            pnlProgress.Visible = false;
+        }
+'@
+    try {
+        $src = Replace-CSharpMethod -Source $src `
+            -Signature 'private void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)' `
+            -NewText $newCompleted
+        Write-Ok '列表回调已改为"先清空 + 按标题去重"'
+    } catch {
+        Write-Warn2 "列表回调补丁跳过：$($_.Exception.Message)"
+    }
+
+    # Single() 在有重名时抛 InvalidOperationException，换成 FirstOrDefault()
+    $before = $src
+    $src = $src -replace 'gamelist\.Single\(', 'gamelist.FirstOrDefault('
+    if ($src -ne $before) { Write-Ok 'gamelist.Single -> FirstOrDefault（避免重名崩溃）' }
+} else {
+    Write-Ok '列表回调补丁已存在，跳过'
 }
 
 # --- 3.6 让"跳过"可见 ---
@@ -584,7 +636,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch -or $needUiPatch) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak

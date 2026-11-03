@@ -90,8 +90,10 @@ artifact **TrophyUnlocker**（整个 `bin\Release` 目录，含运行时依赖 D
 5. **重写扫描逻辑** —— 原来只扫 `/system_data/priv/appmeta/` 一个目录，而且要求
    `param.sfo`、`nptitle.dat`、`npbind.dat`、`TROPHY.TRP` 四个文件全取到、两次解析全成功，
    才 `gamelist.Add()`；任何一步失败那个游戏就无声消失（catch 是空的）。这就是"能连上但列表不全"。
-   现在同时扫 `system_data/priv/appmeta/`、`user/appmeta/`、`appmeta/`，按 TitleId 去重，
-   每一条（成功/跳过/原因/目录条目数）都写进 exe 同目录的 `trophylog.txt`
+   现在同时扫 `system_data/priv/appmeta/`、`user/appmeta/`、`mnt/ext0|ext1|usb0|usb1/user/appmeta/`，
+   按 TitleId 去重，每一条（成功/跳过/原因/目录原始行数）都写进 exe 同目录的 `trophylog.txt`
+6. **列表不再重复** —— `RunWorkerCompleted` 原来只 `Items.Add` 从不 `Clear`，每扫一次就再累加一遍；
+   同时把 `gamelist.Single(...)` 换成 `FirstOrDefault(...)`，避免同名游戏直接抛异常
 
 ## 注意
 
