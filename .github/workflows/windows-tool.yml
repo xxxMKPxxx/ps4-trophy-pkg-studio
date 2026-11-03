@@ -1,0 +1,58 @@
+name: build windows tool
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  unlocker:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 上游仓库：注意它的源码是不完整的
+      #   - ProjectReference 指向 ..\PS4_Tools\PS4_Tools.csproj，但仓库里没有这个目录
+      #   - PARAM.SFO 的 HintPath 是作者本机的绝对路径
+      # 好在 TrophyUnlocker\bin\Release 里提交了预编译的 PS4_Tools.dll 和 PARAM.SFO.dll，
+      # 补丁脚本会把这两处引用改指向它们。
+      - name: Checkout PS4_Tools
+        uses: actions/checkout@v4
+        with:
+          repository: xXxTheDarkprogramerxXx/PS4_Tools
+          path: PS4_Tools
+
+      - name: Apply patch
+        shell: pwsh
+        run: |
+          $repo = Join-Path $env:GITHUB_WORKSPACE 'PS4_Tools'
+          $ref  = Join-Path $repo 'TrophyUnlocker\bin\Release'
+          & "$env:GITHUB_WORKSPACE/trophy-unlocker-patch/apply-patch.ps1" -RepoPath $repo -ReferenceDir $ref
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        shell: pwsh
+        run: |
+          # 原项目 target 是 v4.5.2，runner 上不一定有对应 targeting pack，
+          # 直接重定向到 v4.8；引用的 DLL 是 4.5.2 编的，向上兼容。
+          msbuild .\PS4_Tools\TrophyUnlocker\TrophyUnlocker.csproj `
+            /p:Configuration=Release `
+            /p:Platform=AnyCPU `
+            /p:TargetFrameworkVersion=v4.8 `
+            /verbosity:minimal /nologo
+
+      - name: Check output
+        shell: pwsh
+        run: |
+          $exe = '.\PS4_Tools\TrophyUnlocker\bin\Release\TrophyUnlocker.exe'
+          if (-not (Test-Path $exe)) { throw "没有生成 $exe" }
+          Get-Item $exe | Format-List Name, Length, LastWriteTime
+
+      # 整个 Release 目录一起发：exe 运行时还需要同目录下的依赖 DLL 和 Resources
+      - name: Upload runtime folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrophyUnlocker
+          path: PS4_Tools/TrophyUnlocker/bin/Release/
+          if-no-files-found: error

@@ -50,8 +50,23 @@ cd PS4_Tools
 build.bat  D:\PS4_Tools
 ```
 
-需要 VS Build Tools。`apply-patch.ps1` 可重复执行，会备份为 `.bak`；
-`selftest.ps1` 是用 Form1.cs 真实片段跑的回归测试。
+也可以直接在 GitHub 上打包：`build windows tool` 这个 workflow 会在
+`windows-latest` 上克隆上游仓库、打补丁、用 MSBuild 编译，产物是
+artifact **TrophyUnlocker**（整个 `bin\Release` 目录，含运行时依赖 DLL）。
+
+### 为什么需要额外修引用
+
+上游仓库的源码其实是不完整的，干净克隆后直接编译一定失败：
+
+- `ProjectReference` 指向 `..\PS4_Tools\PS4_Tools.csproj`，但仓库里**没有**这个目录
+- `PARAM.SFO` 的 `HintPath` 是作者本机的绝对路径（`..\..\..\..\GitHub\PS3Tools\...`）
+
+好在 `TrophyUnlocker\bin\Release` 里提交了预编译的 `PS4_Tools.dll` 和
+`PARAM.SFO.dll`。`apply-patch.ps1 -ReferenceDir` 会把这两处引用改指向它们。
+另外原项目 target 是 .NET Framework 4.5.2，CI 上直接重定向到 4.8。
+
+`apply-patch.ps1` 可重复执行，会备份为 `.bak`；`selftest.ps1` 和
+`selftest-csproj.ps1` 分别验证 Form1 改写和 csproj 引用改写。
 
 ## 注意
 

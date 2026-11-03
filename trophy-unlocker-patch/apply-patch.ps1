@@ -9,7 +9,12 @@
 #   3. 备份原文件为 .bak
 
 param(
-    [Parameter(Mandatory = $true)][string]$RepoPath
+    [Parameter(Mandatory = $true)][string]$RepoPath,
+
+    # 可选：指向 bin\Release（里面带预编译的 PS4_Tools.dll / PARAM.SFO.dll）。
+    # 传了就会把断掉的 ProjectReference 和作者本机绝对路径的 HintPath 一并修好，
+    # 这样在没有 PS4_Tools 工程源码的情况下也能编译。
+    [string]$ReferenceDir
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,10 +65,11 @@ Write-Step '修改 Form1.cs'
 
 $src = [System.IO.File]::ReadAllText($form, [System.Text.Encoding]::UTF8)
 
-if ($src -match 'TitleIdUtil\.ForGameNpTitle') {
+$needPatch = ($src -notmatch 'TitleIdUtil\.ForGameNpTitle')
+
+if (-not $needPatch) {
     Write-Ok 'Form1.cs 已经是补丁后的状态，跳过'
-    exit 0
-}
+} else {
 
 # 3.1 newpkgid 先声明、后赋值（sfo 在它后面才创建，不能直接引用）
 $before = $src
@@ -83,15 +89,67 @@ if ($src -eq $before) {
     throw '没匹配到 var sfo = new Param_SFO.PARAM_SFO(...); —— 源码版本可能不一样，请手动确认'
 }
 
-# ---------- 4. 备份并写回 ----------
-$bak = "$form.bak"
-if (-not (Test-Path $bak)) {
-    Copy-Item $form $bak
-    Write-Ok "已备份 $bak"
 }
 
-[System.IO.File]::WriteAllText($form, $src, [System.Text.Encoding]::UTF8)
-Write-Ok 'Form1.cs 补丁完成'
+# ---------- 4. 修正引用（可选） ----------
+# 原 csproj 有两处无法在干净环境编译：
+#   1) PARAM.SFO 的 HintPath 指向作者的 ..\..\..\..\GitHub\PS3Tools\...
+#   2) ProjectReference 指向仓库里根本不存在的 ..\PS4_Tools\PS4_Tools.csproj
+# 拿 bin\Release 里的预编译 DLL 顶掉这两个引用即可。
+if ($ReferenceDir) {
+    Write-Step "修正 csproj 引用 -> $ReferenceDir"
+
+    $ps4ToolsDll = Join-Path $ReferenceDir 'PS4_Tools.dll'
+    $paramSfoDll = Join-Path $ReferenceDir 'PARAM.SFO.dll'
+    if (-not (Test-Path $ps4ToolsDll)) { throw "找不到 $ps4ToolsDll" }
+    if (-not (Test-Path $paramSfoDll)) { throw "找不到 $paramSfoDll" }
+
+    [xml]$doc = Get-Content $csproj -Raw -Encoding UTF8
+    $msbNs = 'http://schemas.microsoft.com/developer/msbuild/2003'
+    $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+    $ns.AddNamespace('m', $msbNs)
+
+    $ref = $doc.SelectSingleNode("//m:Reference[@Include='PARAM.SFO']", $ns)
+    if ($ref) {
+        $hp = $ref.SelectSingleNode('m:HintPath', $ns)
+        if (-not $hp) {
+            # 必须带命名空间，否则会写成 xmlns=""，MSBuild 直接忽略该节点
+            $hp = $doc.CreateElement('HintPath', $msbNs)
+            [void]$ref.AppendChild($hp)
+        }
+        $hp.InnerText = $paramSfoDll
+        Write-Ok 'PARAM.SFO 引用已指向本地 DLL'
+    } else {
+        Write-Warn2 '没找到 PARAM.SFO 引用节点'
+    }
+
+    $pr = $doc.SelectSingleNode('//m:ProjectReference', $ns)
+    if ($pr) {
+        $node = $doc.CreateElement('Reference', $msbNs)
+        $node.SetAttribute('Include', 'PS4_Tools')
+        $hp = $doc.CreateElement('HintPath', $msbNs)
+        $hp.InnerText = $ps4ToolsDll
+        [void]$node.AppendChild($hp)
+        [void]$pr.ParentNode.ReplaceChild($node, $pr)
+        Write-Ok 'ProjectReference 已替换为对 PS4_Tools.dll 的引用'
+    } else {
+        Write-Ok '没有 ProjectReference，跳过'
+    }
+
+    $doc.Save($csproj)
+}
+
+# ---------- 5. 备份并写回 ----------
+if ($needPatch) {
+    $bak = "$form.bak"
+    if (-not (Test-Path $bak)) {
+        Copy-Item $form $bak
+        Write-Ok "已备份 $bak"
+    }
+
+    [System.IO.File]::WriteAllText($form, $src, [System.Text.Encoding]::UTF8)
+    Write-Ok 'Form1.cs 补丁完成'
+}
 
 Write-Host ''
 Write-Host '下一步：build.bat 或直接用 VS 打开 TrophyUnlocker.csproj 编译' -ForegroundColor Cyan
