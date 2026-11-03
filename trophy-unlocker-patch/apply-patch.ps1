@@ -165,6 +165,43 @@ if ($needNamePatch) {
     Write-Ok '文件名补丁已存在，跳过'
 }
 
+# --- 3.3 FTP 端口：1337 -> 2121 ---
+# 1337 是老式独立 FTP payload（XVortex）的端口；GoldHEN 内置 FTP 是 2121。
+# 只要没额外跑那个旧 payload，硬编码 1337 必然连不上。
+$needFtpPortPatch = ($src -match ':1337/')
+if ($needFtpPortPatch) {
+    $n = ([regex]::Matches($src, ':1337/')).Count
+    $src = $src -replace ':1337/', ':2121/'
+    Write-Ok "FTP 端口 1337 -> 2121（$n 处）"
+} else {
+    Write-Ok 'FTP 端口已是 2121 或已改过，跳过'
+}
+
+# --- 3.4 目录列表解析 ---
+# 原逻辑按单空格 Split，再要求字段数恰好 9/10 并取固定下标。
+# 但 `Jan  1` 这种日期补位会产生空元素，字段数在 9 和 10 之间摇摆，
+# 一不吻合整个目录就被静默跳过（catch 是空的），表现为"连上了但没游戏"。
+# 改为：只要求 >= 9 个字段，目录名一律取最后一个字段。
+$needFtpListPatch = ($src -match 'splitt\[8\]|splitt\[9\]')
+if ($needFtpListPatch) {
+    $c8 = ([regex]::Matches($src, 'splitt\[8\]')).Count
+    $c9 = ([regex]::Matches($src, 'splitt\[9\]')).Count
+
+    if ($c8 -ne 5 -or $c9 -ne 2) {
+        Write-Warn2 "splitt[8]=$c8 处、splitt[9]=$c9 处，与预期 5/2 不符，跳过解析补丁"
+    } else {
+        $src = $src -replace 'splitt\[9\]', 'splitt[splitt.Length - 1]'
+        $src = $src -replace 'splitt\[8\]', 'splitt[splitt.Length - 1]'
+        $src = $src -replace 'if \(splitt\.Length == 10\)//only do this when 10 items in array',
+                             'if (splitt.Length >= 9)   // 补丁：日期空格补位会让字段数漂移'
+        $src = $src -replace 'if \(splitt\.Length == 9\)//only do this when 10 items in array',
+                             'if (splitt.Length >= 9)   // 补丁：同上'
+        Write-Ok 'FTP 目录列表解析已放宽'
+    }
+} else {
+    Write-Ok '目录列表解析补丁已存在，跳过'
+}
+
 # ---------- 4. 修正引用（可选） ----------
 # 原 csproj 有两处无法在干净环境编译：
 #   1) PARAM.SFO 的 HintPath 指向作者的 ..\..\..\..\GitHub\PS3Tools\...
@@ -214,7 +251,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak
