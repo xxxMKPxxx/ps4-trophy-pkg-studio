@@ -35,6 +35,14 @@ namespace TrophyUnlocker
                     info.npbind = DownloadFile(url + splitt[8] + "/npbind.dat");
                 }
             }
+
+            try
+            {
+                byte[] paramsfo = DownloadFile(url + "CUSA00001/param.sfo");
+            }
+            catch (Exception ex)
+            {
+            }
         }
 
         public static string RemoveSpecialCharacters(string str)
@@ -82,9 +90,11 @@ $checks = @(
   @{ N='末位取值出现 11 次';         Pass = (([regex]::Matches($p, 'splitt\[splitt\.Length - 1\]')).Count -eq 11) },
   @{ N='字段数判断放宽为 >= 9';      Pass = (([regex]::Matches($p, 'splitt\.Length >= 9')).Count -eq 2) },
   @{ N='已排除 . 和 ..';             Pass = (([regex]::Matches($p, '!= "\.\."')).Count -eq 3) },
-  @{ N='DownloadFile 已容错';        Pass = ($p -match '补丁：FTP 取不到文件' -and $p -match 'return new byte\[0\];') },
-  @{ N='DownloadFile 已设超时';      Pass = ($p -match 'request\.Timeout = 15000') },
+  @{ N='DownloadFile 已容错';        Pass = ($p -match '补丁：失败不抛异常' -and $p -match 'return new byte\[0\];') },
+  @{ N='DownloadFile 已设超时';      Pass = ($p -match 'request\.Timeout = 20000') },
   @{ N='DownloadFile 只剩一份';      Pass = (([regex]::Matches($p, 'private byte\[\] DownloadFile')).Count -eq 1) },
+  @{ N='DownloadFile 有重试循环';    Pass = ($p -match 'for \(int attempt = 0; attempt < 3; attempt\+\+\)' -and $p -match 'Thread\.Sleep\(300\)') },
+  @{ N='跳过原因已可见';             Pass = ($p -match '补丁：记录跳过原因' -and $p -notmatch '(?s)catch \(Exception ex\)\s*\{\s*\}') },
   @{ N='大括号仍平衡';               Pass = ((([regex]::Matches($p,'\{')).Count) -eq (([regex]::Matches($p,'\}')).Count)) }
 )
 $fail = 0

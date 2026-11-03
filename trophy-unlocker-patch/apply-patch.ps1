@@ -212,35 +212,59 @@ if ($needDownloadPatch) {
     $newDownload = @'
         private byte[] DownloadFile(string ftpSourceFilePath)
         {
-            // 补丁：FTP 取不到文件时返回空数组，不要让 550 打断整轮扫描
-            try
+            // 补丁：失败不抛异常（否则一次 550 会打断整轮扫描），
+            //       并且重试 3 次 —— 14.00 的 HEN 不稳定，偶发超时很常见。
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                FtpWebRequest request = (FtpWebRequest)WebRequest.Create(ftpSourceFilePath);
-                request.Credentials = new NetworkCredential("anonymous", "janeDoe@contoso.com");
-                request.Method = WebRequestMethods.Ftp.DownloadFile;
-                request.UsePassive = true;
-                request.UseBinary = true;
-                request.Timeout = 15000;
-                request.ReadWriteTimeout = 15000;
-
-                using (FtpWebResponse response = (FtpWebResponse)request.GetResponse())
-                using (Stream reader = response.GetResponseStream())
+                try
                 {
-                    return ReadFully(reader);
+                    FtpWebRequest request = (FtpWebRequest)WebRequest.Create(ftpSourceFilePath);
+                    request.Credentials = new NetworkCredential("anonymous", "janeDoe@contoso.com");
+                    request.Method = WebRequestMethods.Ftp.DownloadFile;
+                    request.UsePassive = true;
+                    request.UseBinary = true;
+                    request.Timeout = 20000;
+                    request.ReadWriteTimeout = 20000;
+
+                    using (FtpWebResponse response = (FtpWebResponse)request.GetResponse())
+                    using (Stream reader = response.GetResponseStream())
+                    {
+                        return ReadFully(reader);
+                    }
+                }
+                catch
+                {
+                    if (attempt == 2)
+                        return new byte[0];
+                    System.Threading.Thread.Sleep(300);
                 }
             }
-            catch
-            {
-                return new byte[0];
-            }
+            return new byte[0];
         }
 '@
     $src = Replace-CSharpMethod -Source $src `
         -Signature 'private byte[] DownloadFile(string ftpSourceFilePath)' `
         -NewText $newDownload
-    Write-Ok 'DownloadFile 已改为容错 + 15 秒超时'
+    Write-Ok 'DownloadFile 已改为容错 + 重试 3 次 + 20 秒超时'
 } else {
     Write-Ok 'DownloadFile 补丁已存在，跳过'
+}
+
+# --- 3.6 让"跳过"可见 ---
+# appmeta 扫描里每个游戏被空 catch 包着，失败就静默消失，
+# 这正好是"能取到但不全"最难查的地方。把原因打到进度条上。
+$needSkipLogPatch = ($src -notmatch '补丁：记录跳过原因')
+if ($needSkipLogPatch) {
+    $before = $src
+    $src = $src -replace '(?s)catch \(Exception ex\)\s*\{\s*\}',
+        "catch (Exception ex)`r`n                {`r`n                    UpdateProgress(`"补丁：记录跳过原因 `" + ex.Message);`r`n                }"
+    if ($src -eq $before) {
+        Write-Warn2 '没找到空的 catch (Exception ex) { }，跳过该补丁'
+    } else {
+        Write-Ok '被跳过的游戏会显示原因'
+    }
+} else {
+    Write-Ok '跳过原因提示已存在，跳过'
 }
 
 # ---------- 4. 修正引用（可选） ----------
@@ -292,7 +316,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak
