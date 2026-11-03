@@ -19,6 +19,7 @@
  */
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 
 #include <orbis/libkernel.h>
@@ -69,28 +70,52 @@ static volatile int g_run;
 static Detour     g_detour;
 
 /* ---------------- 手柄输入 ----------------
- * 只 hook 游戏自己的 scePadReadState，白拿它每帧读到的按键。
- * 绝对不要从插件里调 scePadInit / scePadOpen：游戏启动时正在初始化手柄，
- * 我们再插一脚会直接卡死在标题画面之前（实测过）。
+ * 第三条路，也是唯一零风险的：
+ *   scePadGetHandle() 返回"游戏已经打开的那个句柄"，我们只是拿它读状态。
+ * 不 detour（不改游戏代码，不会和游戏抢执行）、不 scePadInit、
+ * 不 scePadOpen（不会和游戏抢端口）。
  */
-typedef int32_t (*fn_pad_read_state)(int32_t, OrbisPadData *);
+static int g_padHandle = -1;
+static volatile uint32_t g_btn;        /* 最近一次读到的按键位 */
+static volatile int      g_btnReady;   /* 是否已经成功读到过 */
 
-static fn_pad_read_state p_PadReadState;
-static fn_pad_read_state p_PadReadStateOrig;
-static Detour            g_padDetour;
-static int               g_padHookOk;
-
-static volatile uint32_t g_btn;        /* hook 里抓到的最新按键位 */
-static volatile int      g_btnAlive;   /* hook 是否真的被调用过 */
-
-static int32_t PadReadStateHook(int32_t handle, OrbisPadData *data)
+static int pad_acquire(void)
 {
-    int32_t rc = p_PadReadStateOrig(handle, data);
-    if (rc == 0 && data) {
-        g_btn = data->buttons;
-        g_btnAlive = 1;
+    if (g_padHandle >= 0)
+        return g_padHandle;
+
+    int ids[4];
+    int n = 0;
+    int uid = 0;
+
+    if (sceUserServiceGetForegroundUser(&uid) == 0)
+        ids[n++] = uid;
+    ids[n++] = 0x10000000;
+    ids[n++] = 1;
+    ids[n++] = 0;
+
+    for (int i = 0; i < n; i++) {
+        int h = scePadGetHandle(ids[i], ORBIS_PAD_PORT_TYPE_STANDARD, 0);
+        if (h >= 0) {
+            g_padHandle = h;
+            debug_printf("pad handle acquired: uid=0x%08X handle=0x%08X\n", ids[i], h);
+            return h;
+        }
     }
-    return rc;
+    return -1;
+}
+
+static void pad_poll(void)
+{
+    if (pad_acquire() < 0)
+        return;
+
+    OrbisPadData pd;
+    memset(&pd, 0, sizeof(pd));
+    if (scePadReadState(g_padHandle, &pd) == 0) {
+        g_btn = pd.buttons;
+        g_btnReady = 1;
+    }
 }
 
 /* ---------------- 上下文捕获 ---------------- */
@@ -134,27 +159,7 @@ static void install_capture_hook(void)
         &g_detour, (uint64_t)p_RegisterContext, (void *)RegisterContextHook);
 }
 
-/* 把游戏自己的 scePadReadState 挂上，白拿它读到的按键 */
-static void install_pad_hook(void)
-{
-    int res = 0;
-    int lib = sceKernelLoadStartModule("libScePad.sprx", 0, NULL, 0, NULL, &res);
-    if (lib < 0) {
-        debug_printf("load libScePad failed: 0x%08X\n", lib);
-        return;
-    }
-
-    if (sceKernelDlsym(lib, "scePadReadState", (void **)&p_PadReadState) == 0 && p_PadReadState) {
-        Detour_Construct(&g_padDetour, DetourMode_x64);
-        p_PadReadStateOrig = (fn_pad_read_state)Detour_DetourFunction(
-            &g_padDetour, (uint64_t)p_PadReadState, (void *)PadReadStateHook);
-        g_padHookOk = (p_PadReadStateOrig != NULL);
-    } else {
-        debug_printf("dlsym scePadReadState failed\n");
-    }
-
-    debug_printf("pad hook: readState=%d\n", g_padHookOk);
-}
+/* 尝试一次取句柄并读一帧，用于确认输入是否就绪 */
 
 /* 游戏不用奖杯、或者 hook 没命中时的兜底：自己建一个上下文 */
 static int try_self_context(void)
@@ -249,9 +254,10 @@ static void show(int id, int count, int idx)
            idx + 1, count, id, name, unlocked ? "UNLOCKED" : "locked");
 }
 
-/* 按键全部来自 hook，不自己开句柄 */
+/* 每次取值前读一帧游戏自己的句柄 */
 static uint32_t read_buttons(void)
 {
+    pad_poll();
     return g_btn;
 }
 
@@ -320,9 +326,51 @@ static void browse(int count)
 
 /* ---------------- 主线程 ---------------- */
 
+/* 设置文件 /data/GoldHEN/trophy_unlocker.cfg
+ *   enable=0        插件只加载、只写日志，什么都不做（用来判断卡死是不是插件引起的）
+ *   selfcontext=1   没抓到游戏的奖杯上下文时，自己新建一个（有风险，默认关） */
+#define CFG_PATH "/data/GoldHEN/trophy_unlocker.cfg"
+
+static int g_enable  = 1;
+static int g_selfctx = 0;
+
+static void load_cfg(void)
+{
+    FILE *f = fopen(CFG_PATH, "r");
+    if (!f) {
+        FILE *w = fopen(CFG_PATH, "w");
+        if (w) {
+            fputs("# enable=0 -> 插件只写日志，不做任何操作（排查卡死用）\n"
+                  "# selfcontext=1 -> 抓不到游戏上下文时自己新建（有风险）\n"
+                  "enable=1\nselfcontext=0\n", w);
+            fclose(w);
+        }
+        debug_printf("cfg created: enable=1 selfcontext=0\n");
+        return;
+    }
+
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r')
+            continue;
+        if (!strncmp(line, "enable=", 7))
+            g_enable = atoi(line + 7);
+        else if (!strncmp(line, "selfcontext=", 12))
+            g_selfctx = atoi(line + 12);
+    }
+    fclose(f);
+    debug_printf("cfg: enable=%d selfcontext=%d\n", g_enable, g_selfctx);
+}
+
 static void *worker(void *arg)
 {
     (void)arg;
+
+    load_cfg();
+    if (!g_enable) {
+        debug_printf("disabled by cfg, worker exits\n");
+        return NULL;
+    }
 
     if (resolve_symbols() < 0) {
         Notify(TEX_ICON_SYSTEM, "trophy plugin: libSceNpTrophy not found");
@@ -334,32 +382,28 @@ static void *worker(void *arg)
     for (int waited = 0; waited < PICKER_TIMEOUT_US && g_ctx < 0 && g_run; waited += 200000)
         sceKernelUsleep(200000);
 
-    if (g_ctx < 0 && try_self_context() < 0) {
+    if (g_ctx < 0 && (!g_selfctx || try_self_context() < 0)) {
         Notify(TEX_ICON_SYSTEM, "trophy plugin: no trophy context");
-        debug_printf("no trophy context available\n");
+        debug_printf("no trophy context available (selfcontext=%d)\n", g_selfctx);
         return NULL;
     }
 
     debug_printf("ready: ctx=%d handle=%d\n", g_ctx, g_hdl);
 
-    /* 输入：只 hook 游戏自己的读手柄，绝不调 scePadInit / scePadOpen。
-     * 输入源出现得很晚（logo、过场、标题画面之后才开始读手柄），
-     * 所以这里最多等 5 分钟，等不到就继续跑（不影响游戏，只是热键暂时无效）。 */
-    install_pad_hook();
-
-    for (int sec = 0; sec < 300 && g_run; sec++) {
-        if (g_btnAlive)
-            break;
+    /* 输入：拿游戏已打开的句柄。游戏通常过了 logo / 过场 / 标题画面
+     * 才开始读手柄，所以这里最多等 5 分钟；等不到也继续待着，
+     * 绝不退出、也绝不影响游戏本身。 */
+    for (int sec = 0; sec < 300 && g_run && !g_btnReady; sec++) {
+        pad_poll();
         if (sec == 15)
             Notify(TEX_ICON_SYSTEM, "trophy plugin: waiting for input...");
         sceKernelUsleep(1000000);
     }
 
-    if (!g_btnAlive) {
-        debug_printf("no input: pad hook not fired (readState=%d)\n", g_padHookOk);
-    } else {
-        debug_printf("input ready, hook alive\n");
-    }
+    if (!g_btnReady)
+        debug_printf("no input: scePadGetHandle failed (handle=%d)\n", g_padHandle);
+    else
+        debug_printf("input ready: handle=0x%08X\n", g_padHandle);
 
     while (g_run) {
         if (picker_step()) {
@@ -370,10 +414,8 @@ static void *worker(void *arg)
         sceKernelUsleep(50000);
     }
 
-    if (g_padHookOk) {
-        Detour_RestoreFunction(&g_padDetour);
-        Detour_Destroy(&g_padDetour);
-    }
+    /* 句柄是游戏打开的，不能由我们关闭 —— 关掉会把游戏的输入一起弄坏 */
+    g_padHandle = -1;
     Detour_RestoreFunction(&g_detour);
     Detour_Destroy(&g_detour);
     return NULL;

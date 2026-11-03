@@ -34,10 +34,21 @@ bash ps4-trophy-plugin/build-ubuntu.sh
 ### 安装
 
 1. `trophy_unlocker.prx` 拷到 `/data/GoldHEN/plugins/`
-2. `/data/GoldHEN/plugins.ini` 加一行：`trophy_unlocker`
-3. 重启 GoldHEN，进游戏按 `L3+R3`
+2. `/data/GoldHEN/plugins.ini` 写**完整路径**：`/data/GoldHEN/plugins/trophy_unlocker.prx`
+3. 重启 GoldHEN（重新激活一次 HEN 即可），**再重新启动游戏**
 
-首次运行先看 klog 有没有 `[trophy] captured trophry context`，有这行才说明 hook 命中。
+日志写在 `/data/GoldHEN/trophy_unlocker.log`（不用抓 klog）。首次运行会生成
+`/data/GoldHEN/trophy_unlocker.cfg`：
+
+```ini
+enable=1          # 改成 0 则插件只加载、只写日志，什么都不做（排查卡死用）
+selfcontext=0     # 改成 1 才允许在抓不到游戏上下文时自己新建（有风险）
+```
+
+### 输入是怎么拿到的
+
+不 detour 游戏函数、不调 `scePadInit`、不调 `scePadOpen`（都会让游戏在启动阶段卡死或
+抢不到端口）。改用 `scePadGetHandle()` 拿**游戏已经打开的那个句柄**，只读不写。
 
 ## `trophy-unlocker-patch/` — 给 PS4_Tools 的 TrophyUnlocker 打补丁
 
@@ -76,9 +87,11 @@ artifact **TrophyUnlocker**（整个 `bin\Release` 目录，含运行时依赖 D
    表现为"这个游戏被跳过"。改为保留 Unicode 字母数字，只剔除 `\ / : * ? " < > |`
 3. **修正 csproj 引用** —— 见上一节
 4. **FTP 端口 1337 → 2121** —— 1337 是老式独立 FTP payload 的端口，GoldHEN 内置 FTP 是 2121
-5. **FTP 目录列表解析放宽** —— 原逻辑按单空格 split 后要求字段数恰好 9/10，
-   而 `ls` 的日期补位（`Jan  1`）会让字段数漂移，一不吻合整个目录被静默跳过，
-   表现为"能连上但没有游戏"。改为 `>= 9` 个字段、目录名一律取最后一个字段
+5. **重写扫描逻辑** —— 原来只扫 `/system_data/priv/appmeta/` 一个目录，而且要求
+   `param.sfo`、`nptitle.dat`、`npbind.dat`、`TROPHY.TRP` 四个文件全取到、两次解析全成功，
+   才 `gamelist.Add()`；任何一步失败那个游戏就无声消失（catch 是空的）。这就是"能连上但列表不全"。
+   现在同时扫 `system_data/priv/appmeta/`、`user/appmeta/`、`appmeta/`，按 TitleId 去重，
+   每一条（成功/跳过/原因/目录条目数）都写进 exe 同目录的 `trophylog.txt`
 
 ## 注意
 

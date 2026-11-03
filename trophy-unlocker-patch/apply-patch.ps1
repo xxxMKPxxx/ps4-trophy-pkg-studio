@@ -182,10 +182,14 @@ if ($needNamePatch) {
             return s;
         }
 '@
-    $src = Replace-CSharpMethod -Source $src `
-        -Signature 'public static string RemoveSpecialCharacters(string str)' `
-        -NewText $newMethod
-    Write-Ok 'RemoveSpecialCharacters 已改为保留 Unicode'
+    try {
+        $src = Replace-CSharpMethod -Source $src `
+            -Signature 'public static string RemoveSpecialCharacters(string str)' `
+            -NewText $newMethod
+        Write-Ok 'RemoveSpecialCharacters 已改为保留 Unicode'
+    } catch {
+        Write-Warn2 "文件名补丁跳过：$($_.Exception.Message)"
+    }
 } else {
     Write-Ok '文件名补丁已存在，跳过'
 }
@@ -267,10 +271,14 @@ if ($needDownloadPatch) {
             return new byte[0];
         }
 '@
-    $src = Replace-CSharpMethod -Source $src `
-        -Signature 'private byte[] DownloadFile(string ftpSourceFilePath)' `
-        -NewText $newDownload
-    Write-Ok 'DownloadFile 已改为容错 + 重试 3 次 + 20 秒超时'
+    try {
+        $src = Replace-CSharpMethod -Source $src `
+            -Signature 'private byte[] DownloadFile(string ftpSourceFilePath)' `
+            -NewText $newDownload
+        Write-Ok 'DownloadFile 已改为容错 + 重试 3 次 + 20 秒超时'
+    } catch {
+        Write-Warn2 "DownloadFile 补丁跳过：$($_.Exception.Message)"
+    }
 } else {
     Write-Ok 'DownloadFile 补丁已存在，跳过'
 }
@@ -300,6 +308,177 @@ if ($needLogMethod) {
     }
 } else {
     Write-Ok 'LogLine 已存在，跳过'
+}
+
+# --- 3.56 重写 backgroundWorker1_DoWork：双目录扫描 + 逐条日志 ---
+# 原来只扫 /system_data/priv/appmeta/ 一个目录，且要求 param.sfo、nptitle.dat、
+# npbind.dat、TROPHY.TRP 四个文件全部取到、两次解析全部成功，才 gamelist.Add()。
+# 任何一步失败那个游戏就无声消失（catch 是空的）—— 这就是"能连上但列表不全"。
+# 现在：三个候选目录都扫、按 TitleId 去重、每一条都写进 trophylog.txt。
+$hasDoWork = $src.Contains('private void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)')
+$needDoWorkPatch = ($src -notmatch '补丁：扫描两个 appmeta 目录') -and $hasDoWork
+if (-not $hasDoWork) {
+    Write-Warn2 '没找到 backgroundWorker1_DoWork，跳过扫描重写（不影响其他补丁）'
+}
+if ($needDoWorkPatch) {
+    $newDoWork = @'
+        // 补丁：扫描两个 appmeta 目录，逐条写日志
+        private void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)
+        {
+            try
+            {
+                gamelist = new List<GameInfo>();
+
+                string host = textBox1.Text.Trim();
+                string root = "ftp://" + host + ":2121/";
+                LogLine("=== 主机 " + host + " 开始连接 ===");
+                UpdateProgress("Connecting " + host);
+
+                // 不同固件、不同安装方式（光盘/数字/假 PKG）下，已安装游戏的
+                // appmeta 可能只出现在其中一个目录。原来只扫第一项。
+                string[] dirs = new string[]
+                {
+                    "system_data/priv/appmeta/",
+                    "user/appmeta/",
+                    "appmeta/"
+                };
+
+                int total = 0, added = 0, dup = 0;
+                System.Collections.Generic.HashSet<string> seen =
+                    new System.Collections.Generic.HashSet<string>();
+
+                foreach (string dir in dirs)
+                {
+                    string url = root + dir;
+                    int entries = 0, ok = 0;
+
+                    try
+                    {
+                        LogLine("=== 开始扫描 appmeta === " + dir);
+
+                        FtpWebRequest req = (FtpWebRequest)WebRequest.Create(url);
+                        req.Credentials = new NetworkCredential("anonymous", "janeDoe@contoso.com");
+                        req.Method = WebRequestMethods.Ftp.ListDirectoryDetails;
+                        req.UsePassive = true;
+                        req.Timeout = 20000;
+
+                        using (FtpWebResponse resp = (FtpWebResponse)req.GetResponse())
+                        using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                        {
+                            string line;
+                            while ((line = sr.ReadLine()) != null)
+                            {
+                                if (!LooksLikeDir(line)) continue;
+                                string name = LastField(line);
+                                if (name.Length == 0 || name == "." || name == "..") continue;
+
+                                entries++;
+                                total++;
+                                LogLine("列表 " + dir + " -> " + name);
+
+                                try
+                                {
+                                    GameInfo info = new GameInfo();
+                                    UpdateProgress("Game found " + name);
+
+                                    byte[] paramsfo = DownloadFile(url + name + "/param.sfo");
+                                    if (paramsfo.Length == 0)
+                                        throw new Exception("param.sfo 取不到");
+
+                                    info.param = paramsfo;
+                                    var sfofile = PS4_Tools.PKG.SceneRelated.PARAM_SFO.Get_Param_SFO(info.param);
+                                    info.TitleId = sfofile.TitleID;
+                                    info.Title = sfofile.Title;
+                                    info.ContentID = sfofile.ContentID;
+
+                                    if (string.IsNullOrEmpty(info.TitleId))
+                                        throw new Exception("param.sfo 里没有 TITLE_ID");
+
+                                    if (seen.Contains(info.TitleId))
+                                    {
+                                        dup++;
+                                        LogLine("重复跳过 " + info.TitleId + " (" + name + ")");
+                                        continue;
+                                    }
+
+                                    info.nptitle = DownloadFile(url + name + "/nptitle.dat");
+                                    info.npbind = DownloadFile(url + name + "/npbind.dat");
+                                    if (info.npbind.Length == 0)
+                                        throw new Exception("npbind.dat 取不到");
+
+                                    var bindinfo = new PS4_Tools.PKG.SceneRelated.NP_Bind(info.npbind);
+                                    string tmpurl = root + "user/trophy/conf/" + bindinfo.Nptitle + "/";
+                                    info.TrophyFile = DownloadFile(tmpurl + "TROPHY.TRP");
+                                    if (info.TrophyFile.Length == 0)
+                                        throw new Exception("TROPHY.TRP 取不到 (npcommid=" + bindinfo.Nptitle + ")");
+
+                                    seen.Add(info.TitleId);
+                                    gamelist.Add(info);
+                                    added++;
+                                    ok++;
+                                    LogLine("OK   " + info.Title + "  " + info.TitleId);
+                                }
+                                catch (Exception ex)
+                                {
+                                    // 补丁：记录跳过原因，不再静默丢弃
+                                    UpdateProgress("Skip " + name + " : " + ex.Message);
+                                    LogLine("跳过 " + name + " : " + ex.Message);
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogLine("目录不可用 " + dir + " : " + ex.Message);
+                    }
+
+                    LogLine("--- " + dir + " 条目=" + entries + " 成功=" + ok + " ---");
+                }
+
+                LogLine("=== 完成 条目=" + total + " 加入=" + added + " 重复=" + dup + " 跳过=" + (total - added - dup) + " ===");
+                UpdateProgress("Found " + added + " games, skipped " + (total - added - dup) + " (see trophylog.txt)");
+            }
+            catch (Exception ex)
+            {
+                LogLine("致命错误 : " + ex.ToString());
+                MessageBox.Show("Error " + ex.Message, "Error while loading game data");
+            }
+        }
+'@
+    $src = Replace-CSharpMethod -Source $src `
+        -Signature 'private void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)' `
+        -NewText $newDoWork
+
+    # 两个解析辅助方法：ls -l 和 MLSD 两种列表格式都认
+    $helpers = @'
+        // 补丁：只认目录行
+        private static bool LooksLikeDir(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return false;
+            string t = line.Trim();
+            if (t.Length == 0) return false;
+            if (t[0] == 'd') return true;
+            if (t.StartsWith("type=dir", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        // 补丁：目录名一律取最后一个字段（ls 日期会补位，固定下标会错）
+        private static string LastField(string line)
+        {
+            string[] parts = line.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) return "";
+            return parts[parts.Length - 1].Trim();
+        }
+'@
+    try {
+        $src = Insert-AfterCSharpMethod -Source $src -Signature 'public static void LogLine(string s)' -Text $helpers
+    } catch {
+        Write-Warn2 "辅助方法注入失败：$($_.Exception.Message)"
+    }
+
+    Write-Ok '已重写 DoWork：三目录扫描、按 TitleId 去重、逐条写日志'
+} else {
+    Write-Ok 'DoWork 已是多目录版本，跳过'
 }
 
 # --- 3.6 让"跳过"可见 ---
@@ -405,7 +584,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak
