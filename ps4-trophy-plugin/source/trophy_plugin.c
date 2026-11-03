@@ -196,7 +196,7 @@ static void show(int id, int count, int idx)
 
     if (trophy_info(id, name, sizeof(name), &unlocked) != 0) {
         Notify(TEX_ICON_SYSTEM, "[%d/%d] id=%d  no data", idx + 1, count, id);
-        return NULL;
+        return;
     }
     Notify(TEX_ICON_SYSTEM, "[%d/%d] id=%d  %s  %s",
            idx + 1, count, id, name, unlocked ? "UNLOCKED" : "locked");
