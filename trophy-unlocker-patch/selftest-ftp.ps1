@@ -39,10 +39,17 @@ namespace TrophyUnlocker
             try
             {
                 byte[] paramsfo = DownloadFile(url + "CUSA00001/param.sfo");
+                var sfofile = PARAM_SFO.Get_Param_SFO(paramsfo);
+                info.ContentID = sfofile.ContentID;
             }
             catch (Exception ex)
             {
             }
+        }
+
+        public static string AppCommonPath()
+        {
+            return "x";
         }
 
         public static string RemoveSpecialCharacters(string str)
@@ -87,7 +94,7 @@ $checks = @(
   @{ N='已无 :1337/';                Pass = ($p -notmatch ':1337/') },
   @{ N=':2121/ 出现 3 次';           Pass = (([regex]::Matches($p, ':2121/')).Count -eq 3) },
   @{ N='已无 splitt[8]/splitt[9]';   Pass = ($p -notmatch 'splitt\[8\]|splitt\[9\]') },
-  @{ N='末位取值出现 11 次';         Pass = (([regex]::Matches($p, 'splitt\[splitt\.Length - 1\]')).Count -eq 11) },
+  @{ N='末位取值出现 12 次';         Pass = (([regex]::Matches($p, 'splitt\[splitt\.Length - 1\]')).Count -eq 12) },
   @{ N='字段数判断放宽为 >= 9';      Pass = (([regex]::Matches($p, 'splitt\.Length >= 9')).Count -eq 2) },
   @{ N='已排除 . 和 ..';             Pass = (([regex]::Matches($p, '!= "\.\."')).Count -eq 3) },
   @{ N='DownloadFile 已容错';        Pass = ($p -match '补丁：失败不抛异常' -and $p -match 'return new byte\[0\];') },
@@ -95,6 +102,10 @@ $checks = @(
   @{ N='DownloadFile 只剩一份';      Pass = (([regex]::Matches($p, 'private byte\[\] DownloadFile')).Count -eq 1) },
   @{ N='DownloadFile 有重试循环';    Pass = ($p -match 'for \(int attempt = 0; attempt < 3; attempt\+\+\)' -and $p -match 'Thread\.Sleep\(300\)') },
   @{ N='跳过原因已可见';             Pass = ($p -match '补丁：记录跳过原因' -and $p -notmatch '(?s)catch \(Exception ex\)\s*\{\s*\}') },
+  @{ N='已注入 LogLine 方法';        Pass = ($p -match '补丁：扫描日志' -and $p -match 'trophylog\.txt') },
+  @{ N='LogLine 调用 >= 3 处';       Pass = (([regex]::Matches($p, 'LogLine\(')).Count -ge 3) },
+  @{ N='日志含扫描起点';             Pass = ($p -match '=== 开始扫描 appmeta ===') },
+  @{ N='日志含成功记录';             Pass = ($p -match 'LogLine\("OK   "') },
   @{ N='大括号仍平衡';               Pass = ((([regex]::Matches($p,'\{')).Count) -eq (([regex]::Matches($p,'\}')).Count)) }
 )
 $fail = 0

@@ -51,6 +51,31 @@ function Replace-CSharpMethod {
     return $Source.Substring(0, $lineStart) + $NewText + $Source.Substring($end + 1)
 }
 
+# 在指定方法结束后插入新代码（用于加辅助方法，不用关心原方法体长什么样）
+function Insert-AfterCSharpMethod {
+    param([string]$Source, [string]$Signature, [string]$Text)
+
+    $idx = $Source.IndexOf($Signature)
+    if ($idx -lt 0) { throw "没找到方法：$Signature" }
+
+    $braceStart = $Source.IndexOf('{', $idx)
+    if ($braceStart -lt 0) { throw "方法体缺失：$Signature" }
+
+    $depth = 0
+    $end = -1
+    for ($i = $braceStart; $i -lt $Source.Length; $i++) {
+        $ch = $Source[$i]
+        if ($ch -eq '{') { $depth++ }
+        elseif ($ch -eq '}') {
+            $depth--
+            if ($depth -eq 0) { $end = $i; break }
+        }
+    }
+    if ($end -lt 0) { throw "方法体括号不匹配：$Signature" }
+
+    return $Source.Insert($end + 1, "`r`n" + $Text)
+}
+
 $projDir = Join-Path $RepoPath 'TrophyUnlocker'
 $form    = Join-Path $projDir 'Form1.cs'
 $csproj  = Join-Path $projDir 'TrophyUnlocker.csproj'
@@ -257,14 +282,50 @@ $needSkipLogPatch = ($src -notmatch '补丁：记录跳过原因')
 if ($needSkipLogPatch) {
     $before = $src
     $src = $src -replace '(?s)catch \(Exception ex\)\s*\{\s*\}',
-        "catch (Exception ex)`r`n                {`r`n                    UpdateProgress(`"补丁：记录跳过原因 `" + ex.Message);`r`n                }"
+        "catch (Exception ex)`r`n                {`r`n                    UpdateProgress(`"补丁：记录跳过原因 `" + ex.Message);`r`n                    LogLine(`"跳过 `" + splitt[splitt.Length - 1] + `" : `" + ex.Message);`r`n                }"
     if ($src -eq $before) {
         Write-Warn2 '没找到空的 catch (Exception ex) { }，跳过该补丁'
     } else {
-        Write-Ok '被跳过的游戏会显示原因'
+        Write-Ok '被跳过的游戏会记录到日志'
     }
 } else {
     Write-Ok '跳过原因提示已存在，跳过'
+}
+
+# --- 3.7 扫描日志文件 ---
+# 进度条刷得太快看不清，落一份文件到 exe 同目录。
+$needLogPatch = ($src -notmatch '补丁：扫描日志')
+if ($needLogPatch) {
+    $logMethod = @'
+        // 补丁：扫描日志，写到 exe 同目录的 trophylog.txt
+        public static void LogLine(string s)
+        {
+            try
+            {
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "trophylog.txt"),
+                    DateTime.Now.ToString("HH:mm:ss") + "  " + s + Environment.NewLine);
+            }
+            catch { }
+        }
+'@
+    $src = Insert-AfterCSharpMethod -Source $src -Signature 'public static string AppCommonPath()' -Text $logMethod
+
+    # 扫描起点打个标记
+    $before = $src
+    $src = $src -replace '(url = "ftp://" \+ textBox1\.Text \+ ":2121/system_data/priv/appmeta/";)',
+        "LogLine(`"=== 开始扫描 appmeta ===`");`r`n            `$1"
+    if ($src -eq $before) { Write-Warn2 '没找到 appmeta 的 url 赋值行，日志少了起点标记' }
+
+    # 记录每个成功解析的游戏
+    $before = $src
+    $src = $src -replace 'info\.ContentID = sfofile\.ContentID;',
+        "info.ContentID = sfofile.ContentID;`r`n                    LogLine(`"OK   `" + info.Title + `"  `" + info.TitleId);"
+    if ($src -eq $before) { Write-Warn2 '没找到 info.ContentID 赋值行，日志少了成功记录' }
+
+    Write-Ok '扫描结果会写入 trophylog.txt'
+} else {
+    Write-Ok '扫描日志已存在，跳过'
 }
 
 # ---------- 4. 修正引用（可选） ----------
@@ -316,7 +377,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak
