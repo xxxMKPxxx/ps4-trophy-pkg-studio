@@ -31,8 +31,10 @@
 #include "plugin_common.h"
 #include "trophy_plugin.h"
 
-/* OpenOrbis 不同版本对 Pad 常量的前缀不一样，这里兼容一下 */
-#ifdef ORBIS_PAD_BUTTON_CROSS
+/* 这些按键/端口常量在 orbis/_types/pad.h 里是 enum，不是宏。
+ * 所以不能用 #ifdef 探测（#ifdef 只看宏），这里直接采用 ORBIS_ 命名。 */
+typedef OrbisPadData pad_data_t;
+
 #define BTN_CROSS    ORBIS_PAD_BUTTON_CROSS
 #define BTN_CIRCLE   ORBIS_PAD_BUTTON_CIRCLE
 #define BTN_TRIANGLE ORBIS_PAD_BUTTON_TRIANGLE
@@ -40,24 +42,14 @@
 #define BTN_DOWN     ORBIS_PAD_BUTTON_DOWN
 #define BTN_L3       ORBIS_PAD_BUTTON_L3
 #define BTN_R3       ORBIS_PAD_BUTTON_R3
-typedef OrbisPadData pad_data_t;
-#else
-#define BTN_CROSS    SCE_PAD_BUTTON_CROSS
-#define BTN_CIRCLE   SCE_PAD_BUTTON_CIRCLE
-#define BTN_TRIANGLE SCE_PAD_BUTTON_TRIANGLE
-#define BTN_UP       SCE_PAD_BUTTON_UP
-#define BTN_DOWN     SCE_PAD_BUTTON_DOWN
-#define BTN_L3       SCE_PAD_BUTTON_L3
-#define BTN_R3       SCE_PAD_BUTTON_R3
-typedef ScePadData pad_data_t;
-#endif
 
-/* 摇杆端口类型：不同版 OpenOrbis 前缀不一样，同样做兼容 */
-#ifdef ORBIS_PAD_PORT_TYPE_STANDARD
 #define PAD_PORT_STANDARD ORBIS_PAD_PORT_TYPE_STANDARD
-#else
-#define PAD_PORT_STANDARD SCE_PAD_PORT_TYPE_STANDARD
-#endif
+
+/* 这两个在 OpenOrbis 的 libkernel.h 里没有声明，自己补。
+ * 签名按 PS4 内核原语写法，entry 的参数/返回在 ABI 上是同一个指针。 */
+extern int sceKernelCreateThread(const char *name, void (*entry)(void *),
+                                 int prio, int stackSize, int flags, const void *opt);
+extern int sceKernelStartThread(int threadId, unsigned long argSize, void *argBlock);
 
 #define TROPHY_MAX_IDS  256
 #define PICKER_TIMEOUT_US  (120 * 1000 * 1000)   /* 等游戏注册上下文，最多 120s */
