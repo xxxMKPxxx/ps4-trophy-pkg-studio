@@ -2,6 +2,31 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
+
+/* 插件自己的日志，直接落文件 —— 不依赖 klog 是否开着、也不用抓 TCP。
+ * 优先写 /data/GoldHEN/，不可写就退到 /data/。 */
+void plog(const char *fmt, ...)
+{
+    static const char *paths[] = {
+        "/data/GoldHEN/trophy_unlocker.log",
+        "/data/trophy_unlocker.log",
+    };
+
+    FILE *f = NULL;
+    for (int i = 0; i < 2 && !f; i++)
+        f = fopen(paths[i], "a");
+    if (!f)
+        return;
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+
+    fflush(f);
+    fclose(f);
+}
 
 /* 来自 OSM-Made/PS4-Notify 的做法 */
 void NotifyStatic(const char *IconUri, const char *text)

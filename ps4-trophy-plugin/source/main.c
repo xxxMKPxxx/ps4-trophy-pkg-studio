@@ -23,9 +23,11 @@ attr_public uint32_t    g_pluginVersion = 0x00000100;   /* 1.00 */
 
 int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 {
+    plog("=== plugin_load ver 0x%08X ===\n", g_pluginVersion);
     final_printf("[GoldHEN] %s started, ver 0x%08X\n", g_pluginName, g_pluginVersion);
 
     if (trophy_plugin_start() != 0) {
+        plog("trophy_plugin_start failed\n");
         final_printf("trophy_plugin_start failed\n");
         return -1;
     }
@@ -37,6 +39,7 @@ int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 {
     trophy_plugin_stop();
+    plog("=== plugin_unload ===\n");
     final_printf("[GoldHEN] %s unloaded\n", g_pluginName);
     return 0;
 }

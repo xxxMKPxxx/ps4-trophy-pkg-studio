@@ -32,9 +32,12 @@
 #define attr_module_hidden __attribute__((weak)) __attribute__((visibility("hidden")))
 #define attr_public        __attribute__((visibility("default")))
 
-/* 调试期打开：klog 里能看到全部过程 */
-#define debug_printf(a, args...) klog("[trophy] " a, ##args)
-#define final_printf(a, args...) klog("(%s:%d) " a, __FILE__, __LINE__, ##args)
+/* 日志一律落文件：klog 受 -D__USE_PRINTF__ 影响会被换成 printf，看不到，
+ * 而 printf 在插件里也没有输出端。文件最可靠。 */
+void plog(const char *fmt, ...);
+
+#define debug_printf(a, args...) plog("[trophy] " a, ##args)
+#define final_printf(a, args...) plog("(%s:%d) " a, __FILE__, __LINE__, ##args)
 
 void NotifyStatic(const char *IconUri, const char *text);
 void Notify(const char *IconUri, const char *FMT, ...);

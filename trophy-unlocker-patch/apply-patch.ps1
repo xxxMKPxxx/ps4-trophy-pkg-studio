@@ -275,27 +275,9 @@ if ($needDownloadPatch) {
     Write-Ok 'DownloadFile 补丁已存在，跳过'
 }
 
-# --- 3.6 让"跳过"可见 ---
-# appmeta 扫描里每个游戏被空 catch 包着，失败就静默消失，
-# 这正好是"能取到但不全"最难查的地方。把原因打到进度条上。
-$needSkipLogPatch = ($src -notmatch '补丁：记录跳过原因')
-if ($needSkipLogPatch) {
-    $before = $src
-    $src = $src -replace '(?s)catch \(Exception ex\)\s*\{\s*\}',
-        "catch (Exception ex)`r`n                {`r`n                    UpdateProgress(`"补丁：记录跳过原因 `" + ex.Message);`r`n                    LogLine(`"跳过 `" + splitt[splitt.Length - 1] + `" : `" + ex.Message);`r`n                }"
-    if ($src -eq $before) {
-        Write-Warn2 '没找到空的 catch (Exception ex) { }，跳过该补丁'
-    } else {
-        Write-Ok '被跳过的游戏会记录到日志'
-    }
-} else {
-    Write-Ok '跳过原因提示已存在，跳过'
-}
-
-# --- 3.7 扫描日志文件 ---
-# 进度条刷得太快看不清，落一份文件到 exe 同目录。
-$needLogPatch = ($src -notmatch '补丁：扫描日志')
-if ($needLogPatch) {
+# --- 3.55 先注入 LogLine 方法（后面几处日志都要用它，必须先存在） ---
+$needLogMethod = ($src -notmatch '补丁：扫描日志')
+if ($needLogMethod) {
     $logMethod = @'
         // 补丁：扫描日志，写到 exe 同目录的 trophylog.txt
         public static void LogLine(string s)
@@ -309,8 +291,54 @@ if ($needLogPatch) {
             catch { }
         }
 '@
-    $src = Insert-AfterCSharpMethod -Source $src -Signature 'public static string AppCommonPath()' -Text $logMethod
+    try {
+        $src = Insert-AfterCSharpMethod -Source $src -Signature 'public static string AppCommonPath()' -Text $logMethod
+        Write-Ok '已注入 LogLine 方法'
+    } catch {
+        Write-Warn2 "注入 LogLine 失败：$($_.Exception.Message)"
+        $needLogMethod = $false
+    }
+} else {
+    Write-Ok 'LogLine 已存在，跳过'
+}
 
+# --- 3.6 让"跳过"可见 ---
+# Form1.cs 里有 5 处空的 catch (Exception ex) { }，只有 appmeta 那个循环里的
+# 能访问 splitt。所以只替换**第一处**，而且不引用 splitt（否则 CS0103）。
+$needSkipLogPatch = ($src -notmatch '补丁：记录跳过原因')
+if ($needSkipLogPatch) {
+    # 关键：不能取"第一个"空 catch —— 文件里有 5 个，只有 appmeta 那个能访问 splitt。
+    # 先用 appmeta 独有的 "!= \"..\"" 判断定位（它是最后一个），再找它后面的第一个 catch。
+    $rx     = [regex]'(?s)catch \(Exception ex\)\s*\{\s*\}'
+    $anchor = 'splitt[splitt.Length - 1] != ".."'
+    $ai     = $src.LastIndexOf($anchor)
+
+    if ($ai -lt 0) {
+        Write-Warn2 '找不到 appmeta 的 ".." 判断，跳过原因补丁未应用'
+    } else {
+        $cm = $rx.Match($src.Substring($ai))
+        if (-not $cm.Success) {
+            Write-Warn2 '该判断之后没有空 catch，跳过原因补丁未应用'
+        } else {
+            if ($needLogMethod) {
+                $repl = "catch (Exception ex)`r`n                {`r`n                    UpdateProgress(`"补丁：记录跳过原因 `" + ex.Message);`r`n                    LogLine(`"跳过 : `" + ex.Message);`r`n                }"
+            } else {
+                $repl = "catch (Exception ex)`r`n                {`r`n                    UpdateProgress(`"补丁：记录跳过原因 `" + ex.Message);`r`n                }"
+            }
+            $start = $ai + $cm.Index
+            $src = $src.Substring(0, $start) + $repl + $src.Substring($start + $cm.Length)
+            Write-Ok '被跳过的游戏会记录原因（已定位到 appmeta 的那个 catch）'
+        }
+    }
+} else {
+    Write-Ok '跳过原因提示已存在，跳过'
+}
+
+# --- 3.7 扫描日志文件 ---
+# 进度条刷得太快看不清，落一份文件到 exe 同目录。
+# 注意：LogLine 方法由 3.55 注入，这里只负责插入调用点。
+$needLogPatch = ($src -notmatch '=== 开始扫描 appmeta ===')
+if ($needLogPatch) {
     # 扫描起点打个标记
     $before = $src
     $src = $src -replace '(url = "ftp://" \+ textBox1\.Text \+ ":2121/system_data/priv/appmeta/";)',
@@ -325,7 +353,7 @@ if ($needLogPatch) {
 
     Write-Ok '扫描结果会写入 trophylog.txt'
 } else {
-    Write-Ok '扫描日志已存在，跳过'
+    Write-Ok '扫描日志调用点已存在，跳过'
 }
 
 # ---------- 4. 修正引用（可选） ----------
@@ -377,7 +405,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak
