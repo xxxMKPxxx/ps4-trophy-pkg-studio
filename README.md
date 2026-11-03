@@ -94,6 +94,9 @@ artifact **TrophyUnlocker**（整个 `bin\Release` 目录，含运行时依赖 D
    按 TitleId 去重，每一条（成功/跳过/原因/目录原始行数）都写进 exe 同目录的 `trophylog.txt`
 6. **列表不再重复** —— `RunWorkerCompleted` 原来只 `Items.Add` 从不 `Clear`，每扫一次就再累加一遍；
    同时把 `gamelist.Single(...)` 换成 `FirstOrDefault(...)`，避免同名游戏直接抛异常
+7. **应用标题按 UTF-8 写** —— `PARAM_SFO.SaveSFO()` 用系统 ANSI 代码页写字符串，
+   `Unlocker for 龍が如く` 这类标题在 XMB 和 pkg 文件名里都是乱码。
+   `SfoUtil.cs` 直接按 SFO 二进制结构重写 `TITLE`，写完回读校验，失败则保留原文件
 
 ## 注意
 

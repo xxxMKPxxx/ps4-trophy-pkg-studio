@@ -18,10 +18,31 @@ namespace TrophyUnlocker
             string newpkgid = "XDPX30000_00";
             var sfo = new Param_SFO.PARAM_SFO(AppCommonPath() + @"CONTENTS\sce_sys\param.sfo");
             string tmpcontentid = sfo.ContentID;
-            foreach (var t in sfo.Tables)
+
+            //save the title as Unlocker For
+            for (int i = 0; i < sfo.Tables.Count; i++)
             {
-                if (t.Key == "TITLE_ID") { t.Value = newpkgid.Replace("_00", ""); }
+                if (sfo.Tables[i].Name == "TITLE")
+                {
+                    var tempitem = sfo.Tables[i];
+                    tempitem.Value = "Unlocker for " + sfo.Title;
+                    sfo.Tables[i] = tempitem;
+                }
+                if (sfo.Tables[i].Name == "TITLE_ID")
+                {
+                    var tempitem = sfo.Tables[i];
+                    tempitem.Value = newpkgid.Replace("_00", "");
+                    sfo.Tables[i] = tempitem;
+                }
             }
+            sfo.SaveSFO(sfo, AppCommonPath() + @"CONTENTS\sce_sys\param.sfo");
+
+            if (File.Exists(saveFileDialog1.SelectedPath + @"\" + RemoveSpecialCharacters(sfo.Title) + ".pkg"))
+            {
+                File.Delete(saveFileDialog1.SelectedPath + @"\" + RemoveSpecialCharacters(sfo.Title) + ".pkg");
+            }
+            File.Move(saveFileDialog1.SelectedPath + @"\a.pkg",
+                      saveFileDialog1.SelectedPath + @"\" + RemoveSpecialCharacters(sfo.Title) + ".pkg");
         }
 
         private void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)
@@ -155,6 +176,9 @@ $checks = @(
   @{ N='日志含扫描起点';             Pass = ($p -match '=== 开始扫描 appmeta ===') },
   @{ N='日志含成功记录';             Pass = ($p -match 'LogLine\("OK   "') },
   @{ N='TitleId 唯一化仍在';         Pass = (([regex]::Matches($p, 'TitleIdUtil\.ForGameNpTitle')).Count -eq 1) },
+  @{ N='标题用 UTF-8 解出';          Pass = ($p -match 'string realTitle = SfoUtil\.GetString') },
+  @{ N='标题按 UTF-8 重写';          Pass = ($p -match 'SfoUtil\.SetString\(') },
+  @{ N='文件名用 realTitle';         Pass = ($p -match 'RemoveSpecialCharacters\(realTitle\)' -and $p -notmatch 'RemoveSpecialCharacters\(sfo\.Title\)') },
   @{ N='newpkgid 硬编码已移除';      Pass = ($p -notmatch '"XDPX30000_00"') },
   @{ N='大括号仍平衡';               Pass = ((([regex]::Matches($p,'\{')).Count) -eq (([regex]::Matches($p,'\}')).Count)) }
 )

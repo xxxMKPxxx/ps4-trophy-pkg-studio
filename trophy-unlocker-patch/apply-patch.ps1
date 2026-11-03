@@ -86,28 +86,37 @@ if (-not (Test-Path $form))   { throw "找不到 $form，-RepoPath 要指向 PS4
 if (-not (Test-Path $utilSrc)){ throw "找不到 $utilSrc，请把 TitleIdUtil.cs 和本脚本放在同一目录" }
 
 # ---------- 1. 拷工具类 ----------
-Write-Step '安装 TitleIdUtil.cs'
-Copy-Item $utilSrc $utilDst -Force
-Write-Ok "已写入 $utilDst"
+Write-Step '安装工具类'
+$utilFiles = @('TitleIdUtil.cs', 'SfoUtil.cs')
+foreach ($name in $utilFiles) {
+    $s = Join-Path $PSScriptRoot $name
+    if (-not (Test-Path $s)) { throw "找不到 $s，请把补丁包里的 .cs 和本脚本放在同一目录" }
+    Copy-Item $s (Join-Path $projDir $name) -Force
+    Write-Ok "已写入 $name"
+}
 
 # ---------- 2. 登记到 csproj ----------
 if (Test-Path $csproj) {
     $xml = Get-Content $csproj -Raw -Encoding UTF8
-    if ($xml -notmatch 'TitleIdUtil\.cs') {
-        # 挂在 Form1.cs 后面，老式 csproj 用显式 Compile 项
-        # 直接在 </Project> 前加一个独立 ItemGroup。
+    $add = @()
+    foreach ($name in $utilFiles) {
+        if ($xml -notmatch [regex]::Escape($name)) { $add += $name }
+    }
+    if ($add.Count -gt 0) {
+        # 老式 csproj 用显式 Compile 项，直接在 </Project> 前加独立 ItemGroup。
         # 不去正则匹配已有的 <Compile Include="Form1.cs">，因为真项目里它带 <SubType> 子节点，
-        # 是 <Compile ...>...</Compile> 而不是自闭合写法，按行匹配必失败。
+        # 是 <Compile ...>...</Compile> 而非自闭合，按行匹配必失败。
         if ($xml -match '</Project>') {
-            $inject = "  <ItemGroup>`r`n    <Compile Include=`"TitleIdUtil.cs`" />`r`n  </ItemGroup>`r`n</Project>"
+            $items = ($add | ForEach-Object { "    <Compile Include=`"$_`" />" }) -join "`r`n"
+            $inject = "  <ItemGroup>`r`n$items`r`n  </ItemGroup>`r`n</Project>"
             $xml = $xml -replace '</Project>', $inject
             [System.IO.File]::WriteAllText($csproj, $xml, [System.Text.Encoding]::UTF8)
-            Write-Ok '已把 TitleIdUtil.cs 登记到 csproj'
+            Write-Ok ("已登记到 csproj: " + ($add -join ', '))
         } else {
-            Write-Warn2 'csproj 里找不到 </Project>，请手动把 TitleIdUtil.cs 加进项目'
+            Write-Warn2 'csproj 里找不到 </Project>，请手动把 .cs 加进项目'
         }
     } else {
-        Write-Ok 'csproj 里已有 TitleIdUtil.cs，跳过'
+        Write-Ok 'csproj 里已有工具类，跳过'
     }
 } else {
     Write-Warn2 "没找到 $csproj，如果是 SDK 风格项目（自动包含 .cs）就不用管"
@@ -533,6 +542,52 @@ if ($needUiPatch) {
     Write-Ok '列表回调补丁已存在，跳过'
 }
 
+# --- 3.58 param.sfo 的 TITLE 按 UTF-8 写 ---
+# PS4 的 param.sfo 里字符串是 UTF-8，但 PS4_Tools 的 PARAM_SFO.SaveSFO()
+# 用系统 ANSI 代码页写（中文 Windows 上是 GBK）。于是 "Unlocker for 龍が如く"
+# 写回去就是乱码，XMB 里的应用名、pkg 文件名一起坏。
+# 这里用 SfoUtil 按 UTF-8 重写 TITLE（写完回读校验，失败就保留原文件）。
+$needSfoTitlePatch = ($src -notmatch '补丁：自己按 UTF-8 解原始')
+if ($needSfoTitlePatch) {
+    $anchor = '    //save the title as Unlocker For'
+    $before = $src
+    $inject = "    // 补丁：自己按 UTF-8 解原始 param.sfo 的标题（sfo.Title 是库按 ANSI 解出来的）`r`n" +
+              "    string realTitle = SfoUtil.GetString(result.param, `"TITLE`");`r`n" +
+              "    if (string.IsNullOrEmpty(realTitle)) realTitle = sfo.Title;`r`n`r`n" +
+              $anchor
+    $src = $src.Replace($anchor, $inject)
+    if ($src -eq $before) { Write-Warn2 '没找到 "//save the title as Unlocker For"，跳过标题编码补丁' }
+
+    $before = $src
+    $src = $src.Replace('tempitem.Value = "Unlocker for " + sfo.Title;',
+                        'tempitem.Value = "Unlocker for " + realTitle;')
+    if ($src -eq $before) { Write-Warn2 '没找到 TITLE 赋值行' }
+
+    $saveCall = 'sfo.SaveSFO(sfo, AppCommonPath() + @"CONTENTS\sce_sys\param.sfo");'
+    $before = $src
+    $src = $src.Replace($saveCall, $saveCall + "`r`n" +
+        "    // 补丁：SaveSFO 按 ANSI 写字符串，中/日文标题会乱码 —— 用 UTF-8 再写一次 TITLE`r`n" +
+        "    try`r`n" +
+        "    {`r`n" +
+        "        SfoUtil.SetString(AppCommonPath() + @`"CONTENTS\sce_sys\param.sfo`", `"TITLE`", `"Unlocker for `" + realTitle);`r`n" +
+        "        LogLine(`"标题按 UTF-8 写入: Unlocker for `" + realTitle);`r`n" +
+        "    }`r`n" +
+        "    catch (Exception ex)`r`n" +
+        "    {`r`n" +
+        "        LogLine(`"标题修正失败（保留原样）: `" + ex.Message);`r`n" +
+        "    }")
+    if ($src -eq $before) { Write-Warn2 '没找到 sfo.SaveSFO 调用行' }
+
+    # pkg 文件名也跟着用正确的标题，否则文件名同样是乱码
+    $before = $src
+    $src = $src.Replace('RemoveSpecialCharacters(sfo.Title)', 'RemoveSpecialCharacters(realTitle)')
+    if ($src -eq $before) { Write-Warn2 '没找到文件名里的 sfo.Title' }
+
+    Write-Ok '标题改为按 UTF-8 写入（含 pkg 文件名）'
+} else {
+    Write-Ok '标题编码补丁已存在，跳过'
+}
+
 # --- 3.6 让"跳过"可见 ---
 # Form1.cs 里有 5 处空的 catch (Exception ex) { }，只有 appmeta 那个循环里的
 # 能访问 splitt。所以只替换**第一处**，而且不引用 splitt（否则 CS0103）。
@@ -636,7 +691,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch -or $needUiPatch) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch -or $needUiPatch -or $needSfoTitlePatch) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak
