@@ -68,6 +68,14 @@ artifact **TrophyUnlocker**（整个 `bin\Release` 目录，含运行时依赖 D
 `apply-patch.ps1` 可重复执行，会备份为 `.bak`；`selftest.ps1` 和
 `selftest-csproj.ps1` 分别验证 Form1 改写和 csproj 引用改写。
 
+### 补丁做了什么
+
+1. **唯一 Title ID** —— 每个游戏派生 `XDPX#####`，多个 Unlocker 可共存
+2. **文件名保留非英文** —— 原 `RemoveSpecialCharacters` 只允许 `0-9A-Za-z`，
+   中日韩标题会被剥空成 `\.pkg`，`File.Move` 抛异常后被后台线程静默吞掉，
+   表现为"这个游戏被跳过"。改为保留 Unicode 字母数字，只剔除 `\ / : * ? " < > |`
+3. **修正 csproj 引用** —— 见上一节
+
 ## 注意
 
 只影响本机数据。奖杯一旦与 PSN 同步即不可逆，动手前建议断网并备份

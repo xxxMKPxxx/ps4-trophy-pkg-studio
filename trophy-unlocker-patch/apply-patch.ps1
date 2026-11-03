@@ -23,6 +23,34 @@ function Write-Step($msg) { Write-Host "[*] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "[+] $msg" -ForegroundColor Green }
 function Write-Warn2($msg){ Write-Host "[!] $msg" -ForegroundColor Yellow }
 
+# 用花括号配对替换整个 C# 方法，避免对方法体写正则（里面有嵌套大括号）
+function Replace-CSharpMethod {
+    param([string]$Source, [string]$Signature, [string]$NewText)
+
+    $idx = $Source.IndexOf($Signature)
+    if ($idx -lt 0) { throw "没找到方法：$Signature" }
+
+    $braceStart = $Source.IndexOf('{', $idx)
+    if ($braceStart -lt 0) { throw "方法体缺失：$Signature" }
+
+    $depth = 0
+    $end = -1
+    for ($i = $braceStart; $i -lt $Source.Length; $i++) {
+        $ch = $Source[$i]
+        if ($ch -eq '{') { $depth++ }
+        elseif ($ch -eq '}') {
+            $depth--
+            if ($depth -eq 0) { $end = $i; break }
+        }
+    }
+    if ($end -lt 0) { throw "方法体括号不匹配：$Signature" }
+
+    # 连同方法所在行开头的缩进一起替换，避免留下空行
+    $lineStart = $Source.LastIndexOf("`n", $idx) + 1
+
+    return $Source.Substring(0, $lineStart) + $NewText + $Source.Substring($end + 1)
+}
+
 $projDir = Join-Path $RepoPath 'TrophyUnlocker'
 $form    = Join-Path $projDir 'Form1.cs'
 $csproj  = Join-Path $projDir 'TrophyUnlocker.csproj'
@@ -65,30 +93,76 @@ Write-Step '修改 Form1.cs'
 
 $src = [System.IO.File]::ReadAllText($form, [System.Text.Encoding]::UTF8)
 
-$needPatch = ($src -notmatch 'TitleIdUtil\.ForGameNpTitle')
+$needTitlePatch = ($src -notmatch 'TitleIdUtil\.ForGameNpTitle')
+$needNamePatch  = ($src -notmatch 'char\.IsLetterOrDigit')
 
-if (-not $needPatch) {
-    Write-Ok 'Form1.cs 已经是补丁后的状态，跳过'
+# --- 3.1 唯一 Title ID ---
+if ($needTitlePatch) {
+
+    # newpkgid 先声明、后赋值（sfo 在它后面才创建，不能直接引用）
+    $before = $src
+    $src = $src -replace 'string\s+newpkgid\s*=\s*"XDPX30000_00"\s*;',
+                         'string newpkgid;   // 补丁：下面按游戏 Title ID 计算'
+
+    if ($src -eq $before) {
+        throw '没匹配到 string newpkgid = "XDPX30000_00"; —— 源码版本可能不一样，请手动确认'
+    }
+
+    # sfo 创建之后立刻赋值
+    $before = $src
+    $src = $src -replace '(var\s+sfo\s*=\s*new\s+Param_SFO\.PARAM_SFO\([^;]*\)\s*;)',
+                         "`$1`r`n            newpkgid = TitleIdUtil.ForGameNpTitle(sfo.TitleID);   // 补丁：唯一 Title ID"
+
+    if ($src -eq $before) {
+        throw '没匹配到 var sfo = new Param_SFO.PARAM_SFO(...); —— 源码版本可能不一样，请手动确认'
+    }
+    Write-Ok 'Title ID 已改为按游戏计算'
 } else {
-
-# 3.1 newpkgid 先声明、后赋值（sfo 在它后面才创建，不能直接引用）
-$before = $src
-$src = $src -replace 'string\s+newpkgid\s*=\s*"XDPX30000_00"\s*;',
-                     'string newpkgid;   // 补丁：下面按游戏 Title ID 计算'
-
-if ($src -eq $before) {
-    throw '没匹配到 string newpkgid = "XDPX30000_00"; —— 源码版本可能不一样，请手动确认'
+    Write-Ok 'Title ID 补丁已存在，跳过'
 }
 
-# 3.2 sfo 创建之后立刻赋值
-$before = $src
-$src = $src -replace '(var\s+sfo\s*=\s*new\s+Param_SFO\.PARAM_SFO\([^;]*\)\s*;)',
-                     "`$1`r`n            newpkgid = TitleIdUtil.ForGameNpTitle(sfo.TitleID);   // 补丁：唯一 Title ID"
+# --- 3.2 文件名净化：保留非英文字符 ---
+# 原实现只允许 0-9A-Za-z 和 . _ 空格，中日韩标题会被全部剥掉，
+# 最终 File.Move 的目标变成 "\.pkg"，抛异常后被后台线程静默吞掉 —— 表现为该游戏被跳过。
+if ($needNamePatch) {
+    $newMethod = @'
+        public static string RemoveSpecialCharacters(string str)
+        {
+            if (string.IsNullOrEmpty(str))
+                return "unlocker";
 
-if ($src -eq $before) {
-    throw '没匹配到 var sfo = new Param_SFO.PARAM_SFO(...); —— 源码版本可能不一样，请手动确认'
-}
+            // 保留 Unicode 字母数字（中/日/韩/俄/阿拉伯文等），只剔除文件名非法字符
+            StringBuilder sb = new StringBuilder(str.Length);
+            foreach (char c in str)
+            {
+                if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' || c == '.')
+                    sb.Append(c);
+                else if (char.IsWhiteSpace(c))
+                    sb.Append(' ');
+            }
 
+            string s = sb.ToString().Trim().TrimEnd('.');
+            if (s.Length == 0)
+                s = "unlocker";
+            if (s.Length > 100)
+                s = s.Substring(0, 100).TrimEnd('.', ' ');
+
+            // Windows 保留设备名，直接当文件名会失败
+            string[] reserved = { "CON", "PRN", "AUX", "NUL",
+                                  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+                                  "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
+            if (Array.IndexOf(reserved, s.ToUpperInvariant()) >= 0)
+                s = "_" + s;
+
+            return s;
+        }
+'@
+    $src = Replace-CSharpMethod -Source $src `
+        -Signature 'public static string RemoveSpecialCharacters(string str)' `
+        -NewText $newMethod
+    Write-Ok 'RemoveSpecialCharacters 已改为保留 Unicode'
+} else {
+    Write-Ok '文件名补丁已存在，跳过'
 }
 
 # ---------- 4. 修正引用（可选） ----------
@@ -140,7 +214,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needPatch) {
+if ($needTitlePatch -or $needNamePatch) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak
