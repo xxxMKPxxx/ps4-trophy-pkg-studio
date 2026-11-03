@@ -192,14 +192,55 @@ if ($needFtpListPatch) {
     } else {
         $src = $src -replace 'splitt\[9\]', 'splitt[splitt.Length - 1]'
         $src = $src -replace 'splitt\[8\]', 'splitt[splitt.Length - 1]'
+        # 放宽字段数的同时也把 . / .. 排除掉，否则它们会被当成一个"用户"或"游戏"去拼路径
         $src = $src -replace 'if \(splitt\.Length == 10\)//only do this when 10 items in array',
-                             'if (splitt.Length >= 9)   // 补丁：日期空格补位会让字段数漂移'
+                             'if (splitt.Length >= 9 && splitt[splitt.Length - 1] != "." && splitt[splitt.Length - 1] != "..")   // 补丁：放宽字段数，跳过 . 和 ..'
         $src = $src -replace 'if \(splitt\.Length == 9\)//only do this when 10 items in array',
-                             'if (splitt.Length >= 9)   // 补丁：同上'
-        Write-Ok 'FTP 目录列表解析已放宽'
+                             'if (splitt.Length >= 9 && splitt[splitt.Length - 1] != "." && splitt[splitt.Length - 1] != "..")   // 补丁：同上'
+        Write-Ok 'FTP 目录列表解析已放宽（并跳过 . / ..）'
     }
 } else {
     Write-Ok '目录列表解析补丁已存在，跳过'
+}
+
+# --- 3.5 DownloadFile 容错 ---
+# 原实现没有任何 try/catch，且没有设超时。任何一个文件取不到（例如
+# /user/home/<uid>/username.dat 在 14.00 上不存在），550 会穿过整个
+# backgroundWorker1_DoWork，直接把"扫描游戏列表"整轮中断掉。
+$needDownloadPatch = ($src -notmatch '补丁：FTP 取不到文件')
+if ($needDownloadPatch) {
+    $newDownload = @'
+        private byte[] DownloadFile(string ftpSourceFilePath)
+        {
+            // 补丁：FTP 取不到文件时返回空数组，不要让 550 打断整轮扫描
+            try
+            {
+                FtpWebRequest request = (FtpWebRequest)WebRequest.Create(ftpSourceFilePath);
+                request.Credentials = new NetworkCredential("anonymous", "janeDoe@contoso.com");
+                request.Method = WebRequestMethods.Ftp.DownloadFile;
+                request.UsePassive = true;
+                request.UseBinary = true;
+                request.Timeout = 15000;
+                request.ReadWriteTimeout = 15000;
+
+                using (FtpWebResponse response = (FtpWebResponse)request.GetResponse())
+                using (Stream reader = response.GetResponseStream())
+                {
+                    return ReadFully(reader);
+                }
+            }
+            catch
+            {
+                return new byte[0];
+            }
+        }
+'@
+    $src = Replace-CSharpMethod -Source $src `
+        -Signature 'private byte[] DownloadFile(string ftpSourceFilePath)' `
+        -NewText $newDownload
+    Write-Ok 'DownloadFile 已改为容错 + 15 秒超时'
+} else {
+    Write-Ok 'DownloadFile 补丁已存在，跳过'
 }
 
 # ---------- 4. 修正引用（可选） ----------
@@ -251,7 +292,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak

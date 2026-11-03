@@ -49,6 +49,19 @@ namespace TrophyUnlocker
             }
             return sb.ToString();
         }
+
+        private byte[] DownloadFile(string ftpSourceFilePath)
+        {
+            FtpWebRequest request = (FtpWebRequest)WebRequest.Create(ftpSourceFilePath);
+            request.Credentials = new NetworkCredential("anonymous", "janeDoe@contoso.com");
+            request.Method = WebRequestMethods.Ftp.DownloadFile;
+            request.UsePassive = true;
+            request.Method = WebRequestMethods.Ftp.DownloadFile;
+
+            Stream reader = request.GetResponse().GetResponseStream();
+            byte[] buffer = ReadFully(reader);
+            return buffer;
+        }
     }
 }
 '@
@@ -66,8 +79,12 @@ $checks = @(
   @{ N='已无 :1337/';                Pass = ($p -notmatch ':1337/') },
   @{ N=':2121/ 出现 3 次';           Pass = (([regex]::Matches($p, ':2121/')).Count -eq 3) },
   @{ N='已无 splitt[8]/splitt[9]';   Pass = ($p -notmatch 'splitt\[8\]|splitt\[9\]') },
-  @{ N='末位取值出现 7 次';          Pass = (([regex]::Matches($p, 'splitt\[splitt\.Length - 1\]')).Count -eq 7) },
+  @{ N='末位取值出现 11 次';         Pass = (([regex]::Matches($p, 'splitt\[splitt\.Length - 1\]')).Count -eq 11) },
   @{ N='字段数判断放宽为 >= 9';      Pass = (([regex]::Matches($p, 'splitt\.Length >= 9')).Count -eq 2) },
+  @{ N='已排除 . 和 ..';             Pass = (([regex]::Matches($p, '!= "\.\."')).Count -eq 3) },
+  @{ N='DownloadFile 已容错';        Pass = ($p -match '补丁：FTP 取不到文件' -and $p -match 'return new byte\[0\];') },
+  @{ N='DownloadFile 已设超时';      Pass = ($p -match 'request\.Timeout = 15000') },
+  @{ N='DownloadFile 只剩一份';      Pass = (([regex]::Matches($p, 'private byte\[\] DownloadFile')).Count -eq 1) },
   @{ N='大括号仍平衡';               Pass = ((([regex]::Matches($p,'\{')).Count) -eq (([regex]::Matches($p,'\}')).Count)) }
 )
 $fail = 0
