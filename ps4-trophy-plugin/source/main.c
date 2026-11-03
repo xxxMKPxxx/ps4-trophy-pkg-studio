@@ -19,7 +19,7 @@
 attr_public const char *g_pluginName    = "trophy_unlocker";
 attr_public const char *g_pluginDesc    = "In-game trophy unlocker (real, via NpTrophy)";
 attr_public const char *g_pluginAuth    = "";
-attr_public uint32_t    g_pluginVersion = 0x00000102;   /* 1.02：输入改走 scePadGetHandle */
+attr_public uint32_t    g_pluginVersion = 0x00000103;   /* 1.03：就绪提示 + 全解确认 */
 
 int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 {

@@ -200,7 +200,10 @@ static int trophy_count(void)
         d.size = sizeof(d);
         dt.size = sizeof(dt);
 
-        if (p_GetTrophyInfo(g_ctx, g_hdl, id, &d, &dt) == 0) {
+        int rc = p_GetTrophyInfo(g_ctx, g_hdl, id, &d, &dt);
+        if (id == 0)
+            debug_printf("GetTrophyInfo(0) -> 0x%08X\n", rc);
+        if (rc == 0) {
             count = id + 1;
             miss = 0;
         } else {
@@ -290,8 +293,10 @@ static void browse(int count)
     uint32_t prev = 0;
     int idx = 0;
     int active = 1;
+    int confirmAll = 0;
 
     show(idx, count, idx);
+    Notify(TEX_ICON_SYSTEM, "X=unlock   Triangle=all   O=exit");
 
     while (g_run && active) {
         uint32_t btn = read_buttons();
@@ -300,22 +305,48 @@ static void browse(int count)
 
         if (edge & BTN_DOWN) {
             idx = (idx + 1) % count;
+            confirmAll = 0;
             show(idx, count, idx);
         } else if (edge & BTN_UP) {
             idx = (idx - 1 + count) % count;
+            confirmAll = 0;
             show(idx, count, idx);
         } else if (edge & BTN_CROSS) {
-            int rc = unlock_one(idx);
-            show(idx, count, idx);
-            if (rc != 0)
-                Notify(TEX_ICON_SYSTEM, "unlock failed: 0x%08X", rc);
+            confirmAll = 0;
+
+            char nm[128] = "";
+            int un = 0;
+            if (trophy_info(idx, nm, sizeof(nm), &un) == 0 && un) {
+                Notify(TEX_ICON_SYSTEM, "already unlocked: %s", nm);
+            } else {
+                int rc = unlock_one(idx);
+                if (rc == 0)
+                    Notify(TEX_ICON_SYSTEM, "unlocked: %s", nm);
+                else
+                    Notify(TEX_ICON_SYSTEM, "unlock failed: 0x%08X", rc);
+                show(idx, count, idx);
+            }
         } else if (edge & BTN_TRIANGLE) {
-            int ok = 0;
-            for (int i = 0; i < count; i++)
-                if (unlock_one(i) == 0)
-                    ok++;
-            Notify(TEX_ICON_SYSTEM, "unlocked %d / %d trophies", ok, count);
-            active = 0;
+            if (!confirmAll) {
+                /* 解锁全部不可逆（同步后无法撤销），要求连按两次 */
+                confirmAll = 1;
+                Notify(TEX_ICON_SYSTEM, "unlock ALL %d trophies? press Triangle again", count);
+            } else {
+                int ok = 0, skipped = 0;
+                for (int i = 0; i < count; i++) {
+                    char nm[128] = "";
+                    int un = 0;
+                    if (trophy_info(i, nm, sizeof(nm), &un) == 0 && un) {
+                        skipped++;
+                        continue;
+                    }
+                    if (unlock_one(i) == 0)
+                        ok++;
+                }
+                debug_printf("unlock all: ok=%d skipped=%d total=%d\n", ok, skipped, count);
+                Notify(TEX_ICON_SYSTEM, "unlocked %d, already had %d / %d", ok, skipped, count);
+                active = 0;
+            }
         } else if (edge & BTN_CIRCLE) {
             active = 0;
         }
@@ -389,6 +420,12 @@ static void *worker(void *arg)
     }
 
     debug_printf("ready: ctx=%d handle=%d\n", g_ctx, g_hdl);
+
+    /* 等系统把奖杯集挂好再数，太早会得到 0 */
+    sceKernelUsleep(1000000);
+    int n = trophy_count();
+    debug_printf("trophy count=%d\n", n);
+    Notify(TEX_ICON_SYSTEM, "Trophy Unlocker ready: %d trophies, L3/R3", n);
 
     /* 输入：拿游戏已打开的句柄。游戏通常过了 logo / 过场 / 标题画面
      * 才开始读手柄，所以这里最多等 5 分钟；等不到也继续待着，
