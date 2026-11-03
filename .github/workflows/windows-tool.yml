@@ -40,7 +40,16 @@ jobs:
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
             /p:TargetFrameworkVersion=v4.8 `
-            /verbosity:minimal /nologo
+            /verbosity:minimal /nologo `
+            "/flp:logfile=$env:GITHUB_WORKSPACE\build.log;verbosity=normal"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: warn
 
       - name: Check output
         shell: pwsh
