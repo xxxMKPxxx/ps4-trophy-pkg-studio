@@ -70,15 +70,21 @@ static Detour     g_detour;
 
 /* ---------------- 手柄输入 ----------------
  * 在游戏进程里 scePadOpen 经常拿不到句柄（端口已被游戏自己占用），
- * 所以主路径改成 hook 游戏自己的 scePadReadState，白拿它每帧读到的按键；
- * 只有 hook 没命中时才退回自己去 open 一个句柄。
+ * 所以主路径改成 hook 游戏自己的读手柄函数，白拿它每帧读到的按键。
+ * 两种常见 API 都挂：scePadReadState 和 scePadRead（有些游戏只用后者）。
  */
 typedef int32_t (*fn_pad_read_state)(int32_t, OrbisPadData *);
+typedef int32_t (*fn_pad_read)(int32_t, OrbisPadData *, int32_t);
 
 static fn_pad_read_state p_PadReadState;
 static fn_pad_read_state p_PadReadStateOrig;
 static Detour            g_padDetour;
 static int               g_padHookOk;
+
+static fn_pad_read       p_PadRead;
+static fn_pad_read       p_PadReadOrig;
+static Detour            g_padReadDetour;
+static int               g_padReadHookOk;
 
 static volatile uint32_t g_btn;        /* hook 里抓到的最新按键位 */
 static volatile int      g_btnAlive;   /* hook 是否真的被调用过 */
@@ -87,6 +93,16 @@ static int32_t PadReadStateHook(int32_t handle, OrbisPadData *data)
 {
     int32_t rc = p_PadReadStateOrig(handle, data);
     if (rc == 0 && data) {
+        g_btn = data->buttons;
+        g_btnAlive = 1;
+    }
+    return rc;
+}
+
+static int32_t PadReadHook(int32_t handle, OrbisPadData *data, int32_t num)
+{
+    int32_t rc = p_PadReadOrig(handle, data, num);
+    if (rc > 0 && data) {
         g_btn = data->buttons;
         g_btnAlive = 1;
     }
@@ -134,7 +150,7 @@ static void install_capture_hook(void)
         &g_detour, (uint64_t)p_RegisterContext, (void *)RegisterContextHook);
 }
 
-/* 把游戏自己的 scePadReadState 挂上，白拿它读到的按键 */
+/* 把游戏自己的读手柄函数挂上，白拿它读到的按键 */
 static void install_pad_hook(void)
 {
     int res = 0;
@@ -143,16 +159,26 @@ static void install_pad_hook(void)
         debug_printf("load libScePad failed: 0x%08X\n", lib);
         return;
     }
-    if (sceKernelDlsym(lib, "scePadReadState", (void **)&p_PadReadState) != 0 || !p_PadReadState) {
+
+    if (sceKernelDlsym(lib, "scePadReadState", (void **)&p_PadReadState) == 0 && p_PadReadState) {
+        Detour_Construct(&g_padDetour, DetourMode_x64);
+        p_PadReadStateOrig = (fn_pad_read_state)Detour_DetourFunction(
+            &g_padDetour, (uint64_t)p_PadReadState, (void *)PadReadStateHook);
+        g_padHookOk = (p_PadReadStateOrig != NULL);
+    } else {
         debug_printf("dlsym scePadReadState failed\n");
-        return;
     }
 
-    Detour_Construct(&g_padDetour, DetourMode_x64);
-    p_PadReadStateOrig = (fn_pad_read_state)Detour_DetourFunction(
-        &g_padDetour, (uint64_t)p_PadReadState, (void *)PadReadStateHook);
-    g_padHookOk = (p_PadReadStateOrig != NULL);
-    debug_printf("pad hook installed: ok=%d\n", g_padHookOk);
+    if (sceKernelDlsym(lib, "scePadRead", (void **)&p_PadRead) == 0 && p_PadRead) {
+        Detour_Construct(&g_padReadDetour, DetourMode_x64);
+        p_PadReadOrig = (fn_pad_read)Detour_DetourFunction(
+            &g_padReadDetour, (uint64_t)p_PadRead, (void *)PadReadHook);
+        g_padReadHookOk = (p_PadReadOrig != NULL);
+    } else {
+        debug_printf("dlsym scePadRead failed\n");
+    }
+
+    debug_printf("pad hooks: readState=%d read=%d\n", g_padHookOk, g_padReadHookOk);
 }
 
 /* 兜底：自己开一个句柄。不同固件/不同进程里 userId 的约定不一样，
@@ -379,26 +405,32 @@ static void *worker(void *arg)
 
     debug_printf("ready: ctx=%d handle=%d\n", g_ctx, g_hdl);
 
-    /* 输入：先挂游戏的 scePadReadState（不需要句柄），再尝试自己开一个兜底 */
+    /* 输入：先挂游戏的读手柄函数（不需要句柄），再尝试自己开一个兜底 */
     install_pad_hook();
 
-    g_padHandle = pad_try_open();
-    if (g_padHandle < 0)
-        debug_printf("scePadOpen all failed, fallback to hook only\n");
+    /* 输入源出现得很晚：插件在进程启动时注入，游戏往往过了 logo、过场、
+     * 标题画面才开始读手柄。之前只等 2 秒就报 no input source，太早了。
+     * 这里改成最多等 5 分钟，句柄每 5 秒重试一次。 */
+    for (int sec = 0; sec < 300 && g_run; sec++) {
+        if (!g_btnAlive && g_padHandle < 0 && (sec % 5) == 0)
+            g_padHandle = pad_try_open();
 
-    /* 给游戏一两秒去调 scePadReadState，确认哪条路可用 */
-    for (int i = 0; i < 20 && g_run; i++) {
         if (g_btnAlive || g_padHandle >= 0)
             break;
-        sceKernelUsleep(100000);
+
+        if (sec == 15)
+            Notify(TEX_ICON_SYSTEM, "trophy plugin: waiting for input...");
+
+        sceKernelUsleep(1000000);
     }
 
     if (!g_btnAlive && g_padHandle < 0) {
-        Notify(TEX_ICON_SYSTEM, "trophy plugin: no input source");
-        debug_printf("no input source: hook not fired, pad open failed\n");
+        Notify(TEX_ICON_SYSTEM, "trophy plugin: no input after 5 min");
+        debug_printf("no input: readState=%d read=%d, padOpen failed\n",
+                     g_padHookOk, g_padReadHookOk);
         return NULL;
     }
-    debug_printf("input ready: hook=%d padHandle=%d\n", g_btnAlive, g_padHandle);
+    debug_printf("input ready: hookAlive=%d padHandle=%d\n", g_btnAlive, g_padHandle);
 
     while (g_run) {
         if (picker_step()) {
@@ -415,6 +447,10 @@ static void *worker(void *arg)
     if (g_padHookOk) {
         Detour_RestoreFunction(&g_padDetour);
         Detour_Destroy(&g_padDetour);
+    }
+    if (g_padReadHookOk) {
+        Detour_RestoreFunction(&g_padReadDetour);
+        Detour_Destroy(&g_padReadDetour);
     }
     Detour_RestoreFunction(&g_detour);
     Detour_Destroy(&g_detour);
