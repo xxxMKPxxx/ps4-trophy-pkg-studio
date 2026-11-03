@@ -19,6 +19,7 @@
  */
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 #include <orbis/libkernel.h>
 #include <orbis/Pad.h>
@@ -49,6 +50,13 @@ typedef OrbisPadData pad_data_t;
 #define BTN_L3       SCE_PAD_BUTTON_L3
 #define BTN_R3       SCE_PAD_BUTTON_R3
 typedef ScePadData pad_data_t;
+#endif
+
+/* 摇杆端口类型：不同版 OpenOrbis 前缀不一样，同样做兼容 */
+#ifdef ORBIS_PAD_PORT_TYPE_STANDARD
+#define PAD_PORT_STANDARD ORBIS_PAD_PORT_TYPE_STANDARD
+#else
+#define PAD_PORT_STANDARD SCE_PAD_PORT_TYPE_STANDARD
 #endif
 
 #define TROPHY_MAX_IDS  256
@@ -285,13 +293,13 @@ static void browse(int pad_handle, int count)
 
 /* ---------------- 主线程 ---------------- */
 
-static void *worker(void *arg)
+static void worker(void *arg)
 {
     (void)arg;
 
     if (resolve_symbols() < 0) {
         Notify(TEX_ICON_SYSTEM, "trophy plugin: libSceNpTrophy not found");
-        return NULL;
+        return;
     }
     install_capture_hook();
 
@@ -302,22 +310,22 @@ static void *worker(void *arg)
     if (g_ctx < 0 && try_self_context() < 0) {
         Notify(TEX_ICON_SYSTEM, "trophy plugin: no trophy context");
         debug_printf("no trophy context available\n");
-        return NULL;
+        return;
     }
 
     debug_printf("ready: ctx=%d handle=%d\n", g_ctx, g_hdl);
 
     int uid = 0;
     sceUserServiceGetForegroundUser(&uid);
-    int pad = scePadOpen(uid, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
+    int pad = scePadOpen(uid, PAD_PORT_STANDARD, 0, NULL);
     if (pad < 0) {
         /* 部分固件需要先 Init */
         scePadInit();
-        pad = scePadOpen(uid, ORBIS_PAD_PORT_TYPE_STANDARD, 0, NULL);
+        pad = scePadOpen(uid, PAD_PORT_STANDARD, 0, NULL);
     }
     if (pad < 0) {
         Notify(TEX_ICON_SYSTEM, "trophy plugin: cannot open pad (0x%08X)", pad);
-        return NULL;
+        return;
     }
 
     while (g_run) {
@@ -332,19 +340,23 @@ static void *worker(void *arg)
     scePadClose(pad);
     Detour_RestoreFunction(&g_detour);
     Detour_Destroy(&g_detour);
-    return NULL;
+    return;
 }
 
 int trophy_plugin_start(void)
 {
     g_run = 1;
 
-    /* 用原始 syscall 建线程，避免插件里 libc pthread 状态不完整的坑 */
-    extern int scePthreadCreate(unsigned long *, const void *, void *(*)(void *), void *, const char *);
-    unsigned long tid = 0;
-    int rc = scePthreadCreate(&tid, NULL, worker, NULL, "trophy_worker");
-    if (rc != 0) {
-        debug_printf("scePthreadCreate failed: 0x%08X\n", rc);
+    /* 用 sceKernelCreateThread 而不是 pthread：
+     * 插件是注入进游戏进程的，libc 的 pthread 状态不属于我们，
+     * 而 sceKernelCreateThread 是内核原语，任何进程里都可用。 */
+    int thr = sceKernelCreateThread("trophy_worker", worker, 0x40, 0x8000, 0, NULL);
+    if (thr < 0) {
+        debug_printf("sceKernelCreateThread failed: 0x%08X\n", thr);
+        return -1;
+    }
+    if (sceKernelStartThread(thr, 0, NULL) != 0) {
+        debug_printf("sceKernelStartThread failed\n");
         return -1;
     }
     return 0;
