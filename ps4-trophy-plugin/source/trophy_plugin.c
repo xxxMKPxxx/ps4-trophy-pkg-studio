@@ -45,12 +45,6 @@ typedef OrbisPadData pad_data_t;
 
 #define PAD_PORT_STANDARD ORBIS_PAD_PORT_TYPE_STANDARD
 
-/* 这两个在 OpenOrbis 的 libkernel.h 里没有声明，自己补。
- * 签名按 PS4 内核原语写法，entry 的参数/返回在 ABI 上是同一个指针。 */
-extern int sceKernelCreateThread(const char *name, void (*entry)(void *),
-                                 int prio, int stackSize, int flags, const void *opt);
-extern int sceKernelStartThread(int threadId, unsigned long argSize, void *argBlock);
-
 #define TROPHY_MAX_IDS  256
 #define PICKER_TIMEOUT_US  (120 * 1000 * 1000)   /* 等游戏注册上下文，最多 120s */
 
@@ -202,7 +196,7 @@ static void show(int id, int count, int idx)
 
     if (trophy_info(id, name, sizeof(name), &unlocked) != 0) {
         Notify(TEX_ICON_SYSTEM, "[%d/%d] id=%d  no data", idx + 1, count, id);
-        return;
+        return NULL;
     }
     Notify(TEX_ICON_SYSTEM, "[%d/%d] id=%d  %s  %s",
            idx + 1, count, id, name, unlocked ? "UNLOCKED" : "locked");
@@ -285,13 +279,13 @@ static void browse(int pad_handle, int count)
 
 /* ---------------- 主线程 ---------------- */
 
-static void worker(void *arg)
+static void *worker(void *arg)
 {
     (void)arg;
 
     if (resolve_symbols() < 0) {
         Notify(TEX_ICON_SYSTEM, "trophy plugin: libSceNpTrophy not found");
-        return;
+        return NULL;
     }
     install_capture_hook();
 
@@ -302,7 +296,7 @@ static void worker(void *arg)
     if (g_ctx < 0 && try_self_context() < 0) {
         Notify(TEX_ICON_SYSTEM, "trophy plugin: no trophy context");
         debug_printf("no trophy context available\n");
-        return;
+        return NULL;
     }
 
     debug_printf("ready: ctx=%d handle=%d\n", g_ctx, g_hdl);
@@ -317,7 +311,7 @@ static void worker(void *arg)
     }
     if (pad < 0) {
         Notify(TEX_ICON_SYSTEM, "trophy plugin: cannot open pad (0x%08X)", pad);
-        return;
+        return NULL;
     }
 
     while (g_run) {
@@ -332,23 +326,20 @@ static void worker(void *arg)
     scePadClose(pad);
     Detour_RestoreFunction(&g_detour);
     Detour_Destroy(&g_detour);
-    return;
+    return NULL;
 }
 
 int trophy_plugin_start(void)
 {
     g_run = 1;
 
-    /* 用 sceKernelCreateThread 而不是 pthread：
-     * 插件是注入进游戏进程的，libc 的 pthread 状态不属于我们，
-     * 而 sceKernelCreateThread 是内核原语，任何进程里都可用。 */
-    int thr = sceKernelCreateThread("trophy_worker", worker, 0x40, 0x8000, 0, NULL);
-    if (thr < 0) {
-        debug_printf("sceKernelCreateThread failed: 0x%08X\n", thr);
-        return -1;
-    }
-    if (sceKernelStartThread(thr, 0, NULL) != 0) {
-        debug_printf("sceKernelStartThread failed\n");
+    /* 用 scePthreadCreate：PS4 的 pthread 实现在 libkernel 里，
+     * 是这套生态（apollo、GoldHEN 各插件）建后台线程的标准做法。
+     * sceKernelCreateThread 不在 libkernel 的 stub 里，链接会失败。 */
+    OrbisPthread tid;
+    int rc = scePthreadCreate(&tid, NULL, worker, NULL, "trophy_worker");
+    if (rc != 0) {
+        debug_printf("scePthreadCreate failed: 0x%08X\n", rc);
         return -1;
     }
     return 0;
