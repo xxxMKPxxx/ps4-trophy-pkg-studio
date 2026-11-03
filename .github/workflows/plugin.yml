@@ -1,0 +1,48 @@
+name: build prx
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  prx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install llvm/lld
+        run: sudo apt-get update && sudo apt-get install -y llvm lld
+
+      - name: Download OpenOrbis toolchain
+        working-directory: ps4-trophy-plugin
+        run: |
+          curl -sL https://github.com/illusion0001/OpenOrbis-PS4-Toolchain/releases/latest/download/toolchain.tar.gz | tar xz -C ./
+          echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/ps4-trophy-plugin/OpenOrbis/PS4Toolchain" >> $GITHUB_ENV
+
+      - name: Checkout GoldHEN Plugin SDK
+        uses: actions/checkout@v4
+        with:
+          repository: GoldHEN/GoldHEN_Plugins_SDK
+          path: ps4-trophy-plugin/SDK
+
+      - name: Build SDK
+        working-directory: ps4-trophy-plugin
+        run: |
+          echo "GOLDHEN_SDK=$GITHUB_WORKSPACE/ps4-trophy-plugin/SDK" >> $GITHUB_ENV
+          make -C SDK PRINTF=1
+
+      - name: Build plugin
+        working-directory: ps4-trophy-plugin
+        run: make clean && make
+
+      - name: List output
+        working-directory: ps4-trophy-plugin
+        run: ls -l *.prx
+
+      - name: Upload prx
+        uses: actions/upload-artifact@v4
+        with:
+          name: trophy_unlocker
+          path: ps4-trophy-plugin/*.prx
+          if-no-files-found: error

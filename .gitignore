@@ -1,0 +1,14 @@
+# 构建产物
+ps4-trophy-plugin/OpenOrbis/
+ps4-trophy-plugin/SDK/
+ps4-trophy-plugin/build/
+ps4-trophy-plugin/*.prx
+ps4-trophy-plugin/*.elf
+ps4-trophy-plugin/*.oelf
+bin/
+obj/
+*.bak
+
+# Windows
+Thumbs.db
+desktop.ini
