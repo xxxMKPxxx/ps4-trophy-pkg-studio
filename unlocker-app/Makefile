@@ -36,10 +36,17 @@ all: eboot.bin
 $(INTDIR):
 	mkdir -p $(INTDIR)
 
+# img_create 只收 ELF；而普通 ET_DYN 装进 pkg 会 CE-30045-2，
+# 所以用 tools/fix_elf.py 补成 SCE ELF（e_type=0xFE10 + PT_INTERP）
 eboot.bin: $(INTDIR) $(OBJS)
 	$(LD) $(OBJS) -o $(INTDIR)/unlocker.elf $(LDFLAGS)
+	python3 tools/fix_elf.py $(INTDIR)/unlocker.elf eboot.bin
+
+# 需要 SELF（给 PkgTool.Core 那条流水线）时用：make self
+self: $(INTDIR) $(OBJS)
+	$(LD) $(OBJS) -o $(INTDIR)/unlocker.elf $(LDFLAGS)
 	$(TOOLCHAIN)/bin/$(CDIR)/create-fself -in=$(INTDIR)/unlocker.elf \
-		-out=$(INTDIR)/unlocker.oelf --eboot "eboot.bin" --paid 0x3800000000000011
+		-out=$(INTDIR)/unlocker.oelf --eboot "eboot.self" --paid 0x3800000000000011
 
 $(INTDIR)/%.o: source/%.c
 	$(CC) $(CFLAGS) -o $@ $<
@@ -47,4 +54,4 @@ $(INTDIR)/%.o: source/%.c
 clean:
 	rm -rf $(INTDIR) eboot.bin
 
-.PHONY: all clean
+.PHONY: all clean self

@@ -37,8 +37,14 @@ jobs:
       - name: 检查产物
         working-directory: unlocker-app
         run: |
-          ls -l eboot.bin build/unlocker.elf
-          file eboot.bin build/unlocker.elf || true
+          ls -l eboot.bin
+          python3 - <<'EOF'
+          import struct
+          d=open('eboot.bin','rb').read()
+          print('size',len(d),'magic',d[:4])
+          print('e_type', hex(struct.unpack_from('<H',d,16)[0]))
+          print('phnum', struct.unpack_from('<H',d,56)[0])
+          EOF
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -46,7 +52,6 @@ jobs:
           name: unlocker-eboot
           path: |
             unlocker-app/eboot.bin
-            unlocker-app/build/unlocker.elf
             app-build.log
           if-no-files-found: warn
 
@@ -62,8 +67,8 @@ jobs:
 
           # img_create 要的是**未转 SELF 的 ELF**，给 SELF 会报
           # "already converted from elf file to self file"，所以发布 ELF
-          if [ -f unlocker-app/build/unlocker.elf ]; then
-            cp unlocker-app/build/unlocker.elf ./eboot.elf
+          if [ -f unlocker-app/eboot.bin ]; then
+            cp unlocker-app/eboot.bin ./eboot.elf
             git add -f eboot.elf
           fi
           if [ -f unlocker-app/eboot.bin ]; then
