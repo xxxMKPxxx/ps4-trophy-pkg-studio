@@ -73,6 +73,8 @@ void log_str(const char *s)
     if (g_logfd < 0 || !s)
         return;
     sceKernelWrite(g_logfd, s, (size_t)strlen(s));
+    /* 每行立即落盘：崩溃时最后一行就是崩在哪一步，别让缓存吞掉线索 */
+    sceKernelFsync(g_logfd);
 }
 
 void log_int(const char *label, int v)
@@ -446,12 +448,17 @@ int main(void)
 
     log_str("entering ui\n");
     ui_run();
+    log_str("ui returned\n");
 
+    /* 5. 退出清理。官方 samples/trophies 结尾是 for(;;) 从不退出，也从不调
+       DestroyHandle/DestroyContext —— RegisterContext 是异步的，进程收尾时主动销毁
+       容易在内核里踩到还没释放的上下文（CE-34878-0）。这里同样不主动销毁，
+       让系统随进程一起回收。 */
+    gfx_shutdown();
+    log_str("gfx shutdown ok\n");
+
+    log_str("skip destroy (system reclaims)\n");
     log_str("=== end ===\n");
-    sceNpTrophyDestroyHandle(g_hdl);
-    sceNpTrophyDestroyContext(g_ctx);
-    if (g_logfd >= 0)
-        sceKernelFsync(g_logfd);
 
     return 0;
 }

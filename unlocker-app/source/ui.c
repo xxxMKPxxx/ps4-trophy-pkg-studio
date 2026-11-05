@@ -315,6 +315,7 @@ void ui_run(void)
 {
     int pad;
     uint32_t prev = 0;
+    int l1_recent = 0;            /* L1 松开后的宽容窗口，避免两键不同帧被当成单独 ○ */
     int total = api_count();
 
     if (scePadInit() != 0)
@@ -348,9 +349,19 @@ void ui_run(void)
         pressed = now & ~prev;
         prev = now;
 
+        /* L1 和 ○ 很少在同一帧被采到：L1 松开后保留约 1 秒的窗口，
+           窗口内按 ○ 一律算组合键，不会被误判成"退出" */
+        if (now & ORBIS_PAD_BUTTON_L1)
+            l1_recent = 30;
+        else if (l1_recent > 0)
+            l1_recent--;
+
         /* ○：普通按 = 退出（完成界面 = 回列表）；L1 + ○ = 一键解锁 / 停止 */
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-            if (now & ORBIS_PAD_BUTTON_L1) {
+            int combo = (now & ORBIS_PAD_BUTTON_L1) || l1_recent > 0;
+            log_line("circle pressed combo=%d l1_recent=%d mode=%d", combo, l1_recent, s_mode);
+            l1_recent = 0;
+            if (combo) {
                 if (s_mode == 0) {
                     s_ok = s_skip = s_fail = 0;
                     build_plan();

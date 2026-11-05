@@ -28,4 +28,8 @@ void gfx_blit_alpha(int x, int y, const uint8_t *src, int w, int h, int pitch, u
 /* 画完调用：提交并等这一帧真的显示出来（双缓冲要等，否则下一帧会写正在显示的缓冲） */
 void gfx_present(void);
 
+/* 退出前必须调用：删 flip 事件队列、关 video out、释放 direct memory。
+   不清理就 return 会让内核在进程回收时报错（CE-34878-0） */
+void gfx_shutdown(void);
+
 #endif

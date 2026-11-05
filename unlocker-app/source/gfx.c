@@ -4,6 +4,7 @@
 #include <orbis/VideoOut.h>
 
 #include "gfx.h"
+#include "log.h"
 
 static int      s_video = -1;
 static int      s_ready;
@@ -162,12 +163,40 @@ void gfx_present(void)
         OrbisKernelEvent ev;
         int count = 0;
 
+        memset(&st, 0, sizeof(st));
         if (sceVideoOutGetFlipStatus(s_video, &st) == 0 && st.flipArg == s_frame)
             break;
 
-        if (sceKernelWaitEqueue(s_flipQueue, &ev, 1, &count, NULL) != 0)
+        if (sceKernelWaitEqueue(s_flipQueue, &ev, 1, &count, 0) != 0)
             break;
     }
 
     s_cur ^= 1;
+}
+
+void gfx_shutdown(void)
+{
+    if (!s_ready)
+        return;
+
+    s_ready = 0;
+
+    /* 每一步都写日志：万一清理本身崩了，最后一行能直接指出是哪一步 */
+    log_str("gfx: delete equeue\n");
+    sceKernelDeleteEqueue(s_flipQueue);
+
+    log_str("gfx: close video out\n");
+    sceVideoOutClose(s_video);
+    s_video = -1;
+
+    if (s_videoMem) {
+        log_str("gfx: munmap\n");
+        sceKernelMunmap(s_videoMem, s_directSize);
+        log_str("gfx: release direct memory\n");
+        sceKernelReleaseDirectMemory(s_directOff, s_directSize);
+        s_videoMem = NULL;
+    }
+
+    s_fb[0] = NULL;
+    s_fb[1] = NULL;
 }
