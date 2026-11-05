@@ -291,32 +291,36 @@ namespace PkgStudio
             return h;
         }
 
-        /// <summary>整包解压前先看空间，否则 orbis 只会默默失败。</summary>        private static void CheckSpace(string dir, long needBytes)
+        /// <summary>整包解压前先看空间，否则 orbis 只会默默失败。</summary>
+        private static void CheckSpace(string dir, long needBytes)
         {
+            string root;
+            long free;
+
             try
             {
-                string root = Path.GetPathRoot(Path.GetFullPath(dir));
+                root = Path.GetPathRoot(Path.GetFullPath(dir));
                 if (string.IsNullOrEmpty(root))
                     return;
 
-                DriveInfo di = new DriveInfo(root);
-                long free = di.AvailableFreeSpace;
-
-                Log.Write("缓存盘 " + root + " 可用 " + (free / 1024 / 1024) + " MB，需要约 "
-                    + (needBytes / 1024 / 1024) + " MB");
-
-                if (free < needBytes)
-                {
-                    throw new Exception("磁盘空间不足：整包解压需要约 "
-                        + (needBytes / 1024 / 1024) + " MB，缓存盘 " + root + " 只剩 "
-                        + (free / 1024 / 1024) + " MB。\r\n"
-                        + "清理空间，或把系统临时目录改到大一点的盘再试。");
-                }
+                free = new DriveInfo(root).AvailableFreeSpace;
             }
             catch (Exception ex)
             {
-                if (ex.Message.StartsWith("磁盘空间不足"))
-                    throw;
+                // 拿不到磁盘信息不该拦住流程，记一笔就走
+                Log.Write("读取磁盘空间失败，跳过检查: " + ex.Message);
+                return;
+            }
+
+            Log.Write("缓存盘 " + root + " 可用 " + (free / 1024 / 1024) + " MB，需要约 "
+                + (needBytes / 1024 / 1024) + " MB");
+
+            if (free < needBytes)
+            {
+                throw new Exception("磁盘空间不足：整包解压需要约 "
+                    + (needBytes / 1024 / 1024) + " MB，缓存盘 " + root + " 只剩 "
+                    + (free / 1024 / 1024) + " MB。\r\n"
+                    + "清理空间，或把系统临时目录改到大一点的盘再试。");
             }
         }
 
