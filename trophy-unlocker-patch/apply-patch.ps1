@@ -552,7 +552,7 @@ if ($needSfoTitlePatch) {
     $anchor = '    //save the title as Unlocker For'
     $before = $src
     $inject = "    // 补丁：自己按 UTF-8 解原始 param.sfo 的标题（sfo.Title 是库按 ANSI 解出来的）`r`n" +
-              "    string realTitle = SfoUtil.GetString(result.param, `"TITLE`");`r`n" +
+              "    string realTitle = SfoUtil.Enabled ? SfoUtil.GetString(result.param, `"TITLE`") : sfo.Title;`r`n" +
               "    if (string.IsNullOrEmpty(realTitle)) realTitle = sfo.Title;`r`n`r`n" +
               $anchor
     $src = $src.Replace($anchor, $inject)

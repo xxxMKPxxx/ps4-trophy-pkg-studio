@@ -181,7 +181,7 @@ $checks = @(
   @{ N='日志含扫描起点';             Pass = ($p -match '=== 开始扫描 appmeta ===') },
   @{ N='日志含成功记录';             Pass = ($p -match 'LogLine\("OK   "') },
   @{ N='TitleId 唯一化仍在';         Pass = (([regex]::Matches($p, 'TitleIdUtil\.ForGameNpTitle')).Count -eq 1) },
-  @{ N='标题用 UTF-8 解出';          Pass = ($p -match 'string realTitle = SfoUtil\.GetString') },
+  @{ N='标题默认走原路径';          Pass = ($p -match 'SfoUtil\.Enabled \? SfoUtil\.GetString') },
   @{ N='标题按 UTF-8 重写';          Pass = ($p -match 'SfoUtil\.SetString\(') },
   @{ N='CONTENT_ID 自检已插入';      Pass = ($p -match '补丁：CONTENT_ID 自检' -and $p -match 'seg\[1\]\.Replace') },
   @{ N='pkg 产出检查已插入';         Pass = ($p -match 'pkg 未生成，orbis-pub-cmd 可能失败') },

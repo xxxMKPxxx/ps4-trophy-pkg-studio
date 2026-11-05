@@ -30,9 +30,16 @@ namespace TrophyUnlocker
         private const uint PSF_MAGIC = 0x46535000;
 
         // 排查开关（exe 同目录 unlocker.ini）：
-        //   sfofix=0   完全不碰 param.sfo（TITLE 也不修）
+        //   sfofix=1   才重写 param.sfo 的 TITLE（默认关：实测重写会让 PS4 拒装）
         //   cidfix=1   允许自动重建 CONTENT_ID（默认关，只记录不改）
-        private static readonly bool Disabled = (ReadIni("sfofix") == "0");
+        // 默认两个都关 = 与 1188bf4（验证可安装的那版）行为一致。
+        private static readonly bool Disabled = (ReadIni("sfofix") != "1");
+
+        /// <summary>是否启用 param.sfo 重写。默认 false。</summary>
+        public static bool Enabled
+        {
+            get { return !Disabled; }
+        }
 
         /// <summary>是否允许自动改写 CONTENT_ID。默认 false，只记录。</summary>
         public static bool CidFixEnabled
