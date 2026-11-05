@@ -29,35 +29,42 @@ namespace TrophyUnlocker
     {
         private const uint PSF_MAGIC = 0x46535000;
 
-        // 排查开关：exe 同目录 unlocker.ini 里写 sfofix=0，则完全不碰 param.sfo。
-        // 用来判断"安装失败"是不是这一段重写引起的。
-        private static readonly bool Disabled = ReadDisabled();
+        // 排查开关（exe 同目录 unlocker.ini）：
+        //   sfofix=0   完全不碰 param.sfo（TITLE 也不修）
+        //   cidfix=1   允许自动重建 CONTENT_ID（默认关，只记录不改）
+        private static readonly bool Disabled = (ReadIni("sfofix") == "0");
 
-        private static bool ReadDisabled()
+        /// <summary>是否允许自动改写 CONTENT_ID。默认 false，只记录。</summary>
+        public static bool CidFixEnabled
+        {
+            get { return ReadIni("cidfix") == "1"; }
+        }
+
+        private static string ReadIni(string key)
         {
             try
             {
                 string p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "unlocker.ini");
                 if (!File.Exists(p))
-                    return false;
+                    return null;
 
                 foreach (string line in File.ReadAllLines(p))
                 {
                     string s = line.Trim();
-                    if (s.StartsWith("#") || s.Length == 0)
+                    if (s.Length == 0 || s.StartsWith("#"))
                         continue;
                     int eq = s.IndexOf('=');
                     if (eq <= 0)
                         continue;
-                    if (s.Substring(0, eq).Trim().ToLowerInvariant() != "sfofix")
+                    if (s.Substring(0, eq).Trim().ToLowerInvariant() != key)
                         continue;
-                    return s.Substring(eq + 1).Trim() == "0";
+                    return s.Substring(eq + 1).Trim();
                 }
             }
             catch
             {
             }
-            return false;
+            return null;
         }
 
         private sealed class Entry

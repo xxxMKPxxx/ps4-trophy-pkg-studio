@@ -627,9 +627,18 @@ if ($needCidCheck) {
             if (seg.Length >= 3 && seg[1].Replace("_00", "") != tidNow)
             {
                 string fixedCid = seg[0] + "-" + tidNow + "_00-" + seg[2];
-                SfoUtil.SetString(sfoPath, "CONTENT_ID", fixedCid);
-                sfo = new Param_SFO.PARAM_SFO(sfoPath);
-                LogLine("CONTENT_ID 与 TITLE_ID 不一致，已重建为 " + fixedCid);
+                if (SfoUtil.CidFixEnabled)
+                {
+                    SfoUtil.SetString(sfoPath, "CONTENT_ID", fixedCid);
+                    sfo = new Param_SFO.PARAM_SFO(sfoPath);
+                    LogLine("CONTENT_ID 与 TITLE_ID 不一致，已重建为 " + fixedCid);
+                }
+                else
+                {
+                    // 默认只记录不改：原版工具靠 Replace 改 CONTENT_ID，
+                    // 那条路已经验证能装。多改一次反而可能破坏格式。
+                    LogLine("CONTENT_ID 与 TITLE_ID 不一致（默认不改；需要时 unlocker.ini 写 cidfix=1）: 建议值 " + fixedCid);
+                }
             }
         }
     }
