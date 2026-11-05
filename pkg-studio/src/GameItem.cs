@@ -15,7 +15,6 @@ namespace PkgStudio
         public string Source;        // "PKG" / "FTP"
         public string Origin;        // 文件路径或远端目录
         public string RootUrl;       // FTP 根，如 ftp://192.168.1.10:2121/
-        public string PkgUrl;        // FTP 上的 app.pkg 地址（元数据缺失时直接从包里读）
         public string CacheDir;      // PKG 导入时解出来的目录（懒加载其余文件用）
         public string Title;
         public string TitleId;
@@ -25,9 +24,6 @@ namespace PkgStudio
 
         public GameKind Kind = GameKind.Unknown;
 
-        /// <summary>远程 pkg 里的 nptitle/npbind 是加密条目，没有明文版本 —— 只能靠本地 pkg 处理。</summary>
-        public bool NeedsLocalPkg;
-
         public byte[] Param;
         public byte[] Nptitle;
         public byte[] Npbind;
@@ -35,7 +31,7 @@ namespace PkgStudio
 
         public bool Usable
         {
-            get { return Kind == GameKind.Game && !NeedsLocalPkg; }
+            get { return Kind == GameKind.Game; }
         }
 
         public bool FilesLoaded
@@ -61,8 +57,7 @@ namespace PkgStudio
         {
             get
             {
-                if (Kind == GameKind.Game)
-                    return NeedsLocalPkg ? "需本地 pkg（远程为密文）" : "可打包";
+                if (Kind == GameKind.Game) return "可打包";
                 if (Kind == GameKind.Unknown) return "类别无法识别，不可用";
                 return "不可用（" + KindText + "不能做奖杯包）";
             }
