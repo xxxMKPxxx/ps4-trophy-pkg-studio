@@ -24,28 +24,34 @@
 #include <orbis/NpTrophy.h>
 
 #define LOG_PATH "/data/trophy_unlocker.log"
+#define LOG_PATH2 "/user/data/trophy_unlocker.log"
 #define ORDER_PATH "/app0/trophy_order.csv"
 #define ORDER_PATH2 "/app0/sce_sys/trophy_order.csv"
 #define MAX_TROPHIES 512
 #define MAX_ORDER 512
 #define DEFAULT_DELAY_MS 1500
 
-/* NpTrophy 的函数用 dlsym 取，避免和头文件里的声明打架 */
+/* NpTrophy 的函数用 dlsym 取，避免和头文件里的声明打架
+ * 注意 sceNpTrophyRegisterContext 是 3 个参数（ctx, handle, unk），
+ * 官方 sample 就是传 0，不要塞回调。 */
 typedef int32_t (*fn_create_ctx)(int32_t *, int32_t, uint32_t, uint64_t);
 typedef int32_t (*fn_create_hdl)(int32_t *);
-typedef int32_t (*fn_reg_ctx)(int32_t, int32_t, void *, void *, uint64_t);
+typedef int32_t (*fn_reg_ctx)(int32_t, int32_t, uint64_t);
 typedef int32_t (*fn_get_info)(int32_t, int32_t, int32_t, OrbisNpTrophyDetails *, OrbisNpTrophyData *);
 typedef int32_t (*fn_unlock)(int32_t, int32_t, int32_t, int32_t *);
+typedef int32_t (*fn_destroy_ctx)(int32_t);
+typedef int32_t (*fn_destroy_hdl)(int32_t);
 
 static fn_create_ctx p_CreateContext;
 static fn_create_hdl p_CreateHandle;
 static fn_reg_ctx p_RegisterContext;
 static fn_get_info p_GetTrophyInfo;
 static fn_unlock p_UnlockTrophy;
+static fn_destroy_ctx p_DestroyContext;
+static fn_destroy_hdl p_DestroyHandle;
 
 static int32_t g_ctx = -1;
 static int32_t g_hdl = -1;
-static volatile int g_registered;
 
 /* ---------------- 日志 ---------------- */
 
@@ -54,6 +60,8 @@ static int g_logfd = -1;
 static void log_open(void)
 {
     g_logfd = sceKernelOpen(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0777);
+    if (g_logfd < 0)
+        g_logfd = sceKernelOpen(LOG_PATH2, O_WRONLY | O_CREAT | O_APPEND, 0777);
 }
 
 static void log_str(const char *s)
@@ -91,6 +99,24 @@ static void log_int(const char *label, int v)
 }
 
 /* ---------------- 小工具 ---------------- */
+
+static void log_hex(const char *label, uint32_t v)
+{
+    static const char *H = "0123456789abcdef";
+    char buf[64];
+    int i = 0;
+
+    while (label[i] && i < 40)
+        buf[i] = label[i], i++;
+    buf[i++] = '0';
+    buf[i++] = 'x';
+    for (int shift = 28; shift >= 0; shift -= 4)
+        buf[i++] = H[(v >> shift) & 0xF];
+    buf[i++] = '\n';
+    buf[i] = 0;
+
+    log_str(buf);
+}
 
 static int read_all(const char *path, char *buf, int cap)
 {
@@ -180,20 +206,12 @@ static int load_order(int *ids, int *delays, int max)
 
 /* ---------------- 奖杯 ---------------- */
 
-static void on_registered(int32_t ctx, int32_t hdl, int32_t error, void *arg)
-{
-    (void)ctx;
-    (void)hdl;
-    (void)arg;
-    g_registered = (error == 0) ? 1 : -1;
-}
-
 static int resolve_symbols(void)
 {
     int res = 0;
     int lib = sceKernelLoadStartModule("libSceNpTrophy.sprx", 0, NULL, 0, NULL, &res);
     if (lib < 0) {
-        log_int("load libSceNpTrophy failed 0x", lib);
+        log_hex("load libSceNpTrophy failed ", (uint32_t)lib);
         return -1;
     }
 
@@ -206,7 +224,37 @@ static int resolve_symbols(void)
         return -1;
     }
 
+    /* 这两个只是收尾用，取不到也不影响解锁 */
+    if (sceKernelDlsym(lib, "sceNpTrophyDestroyContext", (void **)&p_DestroyContext) != 0)
+        p_DestroyContext = NULL;
+    if (sceKernelDlsym(lib, "sceNpTrophyDestroyHandle", (void **)&p_DestroyHandle) != 0)
+        p_DestroyHandle = NULL;
+
     return 0;
+}
+
+static int get_info(int id, OrbisNpTrophyDetails *d, OrbisNpTrophyData *dt)
+{
+    memset(d, 0, sizeof(*d));
+    memset(dt, 0, sizeof(*dt));
+    d->size = sizeof(*d);
+    dt->size = sizeof(*dt);
+
+    return p_GetTrophyInfo(g_ctx, g_hdl, id, d, dt);
+}
+
+/* 注册是异步的：等 0 号奖杯能读到，说明 context 真正可用了 */
+static int wait_registered(void)
+{
+    OrbisNpTrophyDetails d;
+    OrbisNpTrophyData dt;
+
+    for (int i = 0; i < 100; i++) {
+        if (get_info(0, &d, &dt) == 0)
+            return 0;
+        sceKernelUsleep(100000);
+    }
+    return -1;
 }
 
 static int trophy_count(void)
@@ -217,12 +265,7 @@ static int trophy_count(void)
         OrbisNpTrophyDetails d;
         OrbisNpTrophyData dt;
 
-        memset(&d, 0, sizeof(d));
-        memset(&dt, 0, sizeof(dt));
-        d.size = sizeof(d);
-        dt.size = sizeof(dt);
-
-        if (p_GetTrophyInfo(g_ctx, g_hdl, id, &d, &dt) == 0) {
+        if (get_info(id, &d, &dt) == 0) {
             count = id + 1;
             miss = 0;
         } else {
@@ -237,12 +280,7 @@ static int is_unlocked(int id)
     OrbisNpTrophyDetails d;
     OrbisNpTrophyData dt;
 
-    memset(&d, 0, sizeof(d));
-    memset(&dt, 0, sizeof(dt));
-    d.size = sizeof(d);
-    dt.size = sizeof(dt);
-
-    if (p_GetTrophyInfo(g_ctx, g_hdl, id, &d, &dt) != 0)
+    if (get_info(id, &d, &dt) != 0)
         return 0;
 
     return dt.IsUnlocked ? 1 : 0;
@@ -255,9 +293,16 @@ int main(void)
 
     log_open();
     log_str("=== trophy unlocker (pkg) start ===\n");
-
-    if (resolve_symbols() != 0)
+    if (g_logfd < 0) {
+        /* 日志都写不了，至少别让进程立刻死掉（立刻退出会显示 CE 错误） */
+        sceKernelSleep(20);
         return 1;
+    }
+
+    if (resolve_symbols() != 0) {
+        sceKernelSleep(20);
+        return 1;
+    }
 
     int uid = 0;
     if (sceUserServiceGetInitialUser(&uid) != 0) {
@@ -267,37 +312,42 @@ int main(void)
 
     int rc = p_CreateContext(&g_ctx, uid, 0, 0);
     if (rc != 0) {
-        log_int("CreateContext failed 0x", rc);
+        log_hex("CreateContext failed ", (uint32_t)rc);
+        sceKernelSleep(20);
         return 1;
     }
+    log_int("context ", g_ctx);
 
     rc = p_CreateHandle(&g_hdl);
     if (rc != 0) {
-        log_int("CreateHandle failed 0x", rc);
+        log_hex("CreateHandle failed ", (uint32_t)rc);
+        sceKernelSleep(20);
         return 1;
     }
+    log_int("handle ", g_hdl);
 
-    rc = p_RegisterContext(g_ctx, g_hdl, (void *)on_registered, NULL, 0);
+    /* 和官方 sample 一致：第三个参数是 unk，传 0 */
+    rc = p_RegisterContext(g_ctx, g_hdl, 0);
     if (rc != 0) {
-        log_int("RegisterContext failed 0x", rc);
+        log_hex("RegisterContext failed ", (uint32_t)rc);
+        sceKernelSleep(20);
         return 1;
     }
 
-    for (int i = 0; i < 100 && g_registered == 0; i++)
-        sceKernelUsleep(100000);
-
-    if (g_registered != 1) {
-        log_str("context 没注册成功，放弃\n");
+    if (wait_registered() != 0) {
+        log_str("context 注册后读不到奖杯（奖杯集没装上？），放弃\n");
+        sceKernelSleep(20);
         return 1;
     }
     log_str("context registered\n");
 
-    sceKernelUsleep(500000);
+    sceKernelUsleep(300000);
 
     int count = trophy_count();
     log_int("trophy count ", count);
     if (count <= 0) {
         log_str("这个包没有奖杯集\n");
+        sceKernelSleep(20);
         return 1;
     }
 
@@ -350,10 +400,13 @@ int main(void)
         }
 
         int plat = -1;
-        if (p_UnlockTrophy(g_ctx, g_hdl, id, &plat) == 0)
+        rc = p_UnlockTrophy(g_ctx, g_hdl, id, &plat);
+        if (rc == 0) {
             ok++;
-        else
+        } else {
             log_int("unlock failed id ", id);
+            log_hex("  rc ", (uint32_t)rc);
+        }
 
         if (delays[i] > 0)
             sceKernelUsleep((unsigned int)delays[i] * 1000u);
@@ -363,6 +416,12 @@ int main(void)
     log_int("done: already had ", skipped);
     log_str("=== end ===\n");
 
-    sceKernelUsleep(1000000);
+    /* 正常收尾：先销毁 handle/context，再退出。不销毁直接退出有可能报 CE 错误 */
+    if (p_DestroyHandle)
+        p_DestroyHandle(g_hdl);
+    if (p_DestroyContext)
+        p_DestroyContext(g_ctx);
+
+    sceKernelUsleep(500000);
     return 0;
 }

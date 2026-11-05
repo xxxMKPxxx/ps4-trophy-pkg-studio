@@ -1,6 +1,9 @@
 name: build unlocker app
 
-# 独立 pkg 版的 eboot.bin（在 Unlocker 的 pkg 里跑，不依赖插件）
+# 独立 pkg 版的 eboot（在 Unlocker 的 pkg 里跑，不依赖插件）
+# 产物：
+#   eboot.oelf —— SCE ELF（Orbis ELF），pkg 里当 eboot.bin 用
+#   eboot.self —— 同名 SELF（备用）
 on:
   push:
     branches:
@@ -30,20 +33,35 @@ jobs:
           curl -sL https://github.com/illusion0001/OpenOrbis-PS4-Toolchain/releases/latest/download/toolchain.tar.gz | tar xz -C ./
           echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/unlocker-app/OpenOrbis/PS4Toolchain" >> $GITHUB_ENV
 
-      - name: Build eboot.bin
+      - name: Build eboot
         working-directory: unlocker-app
         run: make clean && make 2>&1 | tee ../app-build.log
 
-      - name: 检查产物
+      - name: 检查产物（必须是 SCE ELF，带 SCE 段）
         working-directory: unlocker-app
         run: |
-          ls -l eboot.bin
+          ls -l eboot.oelf eboot.self
           python3 - <<'EOF'
-          import struct
-          d=open('eboot.bin','rb').read()
-          print('size',len(d),'magic',d[:4])
-          print('e_type', hex(struct.unpack_from('<H',d,16)[0]))
-          print('phnum', struct.unpack_from('<H',d,56)[0])
+          import struct, sys
+
+          d = open('eboot.oelf', 'rb').read()
+          assert d[:4] == b'\x7fELF', 'eboot.oelf 不是 ELF'
+          e_type = struct.unpack_from('<H', d, 16)[0]
+          osabi  = d[7]
+          phoff  = struct.unpack_from('<Q', d, 32)[0]
+          phes   = struct.unpack_from('<H', d, 54)[0]
+          phnum  = struct.unpack_from('<H', d, 56)[0]
+          types = []
+          for i in range(phnum):
+              o = phoff + i * phes
+              types.append(struct.unpack_from('<I', d, o)[0])
+          print('size', len(d), 'e_type', hex(e_type), 'osabi', osabi)
+          print('phdrs', [hex(t) for t in types])
+
+          ok = (e_type == 0xFE10 and 0x61000010 in types and 0x61000001 in types)
+          if not ok:
+              sys.exit('不是 SCE ELF：缺 e_type=0xFE10 或 PT_SCE_RELA(0x61000010) / PT_SCE_PROCPARAM(0x61000001)')
+          print('SCE ELF 检查通过')
           EOF
 
       - uses: actions/upload-artifact@v4
@@ -51,7 +69,8 @@ jobs:
         with:
           name: unlocker-eboot
           path: |
-            unlocker-app/eboot.bin
+            unlocker-app/eboot.oelf
+            unlocker-app/eboot.self
             app-build.log
           if-no-files-found: warn
 
@@ -65,15 +84,14 @@ jobs:
           git checkout --orphan app-builds
           git reset
 
-          # img_create 要的是**未转 SELF 的 ELF**，给 SELF 会报
-          # "already converted from elf file to self file"，所以发布 ELF
-          if [ -f unlocker-app/eboot.bin ]; then
-            cp unlocker-app/eboot.bin ./eboot.elf
-            git add -f eboot.elf
+          # eboot.oelf = SCE ELF，img_create 要的就是这个（给 SELF 会被拒：already converted）
+          if [ -f unlocker-app/eboot.oelf ]; then
+            cp unlocker-app/eboot.oelf ./eboot.oelf
+            git add -f eboot.oelf
           fi
-          if [ -f unlocker-app/eboot.bin ]; then
-            cp unlocker-app/eboot.bin ./eboot.bin
-            git add -f eboot.bin
+          if [ -f unlocker-app/eboot.self ]; then
+            cp unlocker-app/eboot.self ./eboot.self
+            git add -f eboot.self
           fi
           if [ -f app-build.log ]; then git add -f app-build.log; fi
 
