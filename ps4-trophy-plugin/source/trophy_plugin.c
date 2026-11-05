@@ -31,6 +31,7 @@
 
 #include "plugin_common.h"
 #include "trophy_plugin.h"
+#include "unlock_order.h"
 
 /* 这些按键/端口常量在 orbis/_types/pad.h 里是 enum，不是宏。
  * 所以不能用 #ifdef 探测（#ifdef 只看宏），这里直接采用 ORBIS_ 命名。 */
@@ -39,6 +40,7 @@ typedef OrbisPadData pad_data_t;
 #define BTN_CROSS    ORBIS_PAD_BUTTON_CROSS
 #define BTN_CIRCLE   ORBIS_PAD_BUTTON_CIRCLE
 #define BTN_TRIANGLE ORBIS_PAD_BUTTON_TRIANGLE
+#define BTN_SQUARE   ORBIS_PAD_BUTTON_SQUARE
 #define BTN_UP       ORBIS_PAD_BUTTON_UP
 #define BTN_DOWN     ORBIS_PAD_BUTTON_DOWN
 #define BTN_L3       ORBIS_PAD_BUTTON_L3
@@ -68,6 +70,9 @@ static int32_t    g_ctx = -1;
 static int32_t    g_hdl = -1;
 static volatile int g_run;
 static Detour     g_detour;
+
+/* 当前游戏的 TITLE_ID（CUSAxxxxx），用来找它自己的解锁顺序文件 */
+static char       g_tid[16];
 
 /* ---------------- 手柄输入 ----------------
  * 第三条路，也是唯一零风险的：
@@ -288,6 +293,81 @@ static int picker_step(void)
     return 0;
 }
 
+/* ---------------- 批量解锁（按顺序表） ---------------- */
+
+static void sleep_interruptible(int ms)
+{
+    while (ms > 0 && g_run) {
+        int step = ms > 100 ? 100 : ms;
+        sceKernelUsleep(step * 1000);
+        ms -= step;
+    }
+}
+
+/* 有顺序文件就按它走：跳过已解锁的，第一个没解锁的立刻解，之后按文件里的延迟。
+ * 中途退出游戏（g_run 变 0）就停；下次再点批量解锁，会跳过已解锁的从剩下的继续。 */
+static void unlock_all(int count)
+{
+    static int ids[UO_MAX];
+    static int delays[UO_MAX];
+
+    int n = uo_load(g_tid, ids, delays, UO_MAX);
+    int ok = 0, skipped = 0, bad = 0;
+
+    if (n <= 0) {
+        /* 没加入顺序 → 保持原来的逻辑：按奖杯 ID 顺序全解，没有延迟 */
+        debug_printf("unlock all: 无顺序文件，按默认顺序 0..%d\n", count - 1);
+        for (int i = 0; i < count && g_run; i++) {
+            char nm[128] = "";
+            int un = 0;
+            if (trophy_info(i, nm, sizeof(nm), &un) == 0 && un) {
+                skipped++;
+                continue;
+            }
+            if (unlock_one(i) == 0)
+                ok++;
+        }
+        debug_printf("unlock all(default): ok=%d skipped=%d total=%d run=%d\n",
+                     ok, skipped, count, g_run);
+        if (g_run)
+            Notify(TEX_ICON_SYSTEM, "unlocked %d, already had %d / %d", ok, skipped, count);
+        return;
+    }
+
+    Notify(TEX_ICON_SYSTEM, "order: %d trophies, start in 1s", n);
+    sleep_interruptible(1000);
+
+    for (int i = 0; i < n && g_run; i++) {
+        int id = ids[i];
+        if (id >= count) {
+            bad++;
+            continue;
+        }
+
+        char nm[128] = "";
+        int un = 0;
+        if (trophy_info(id, nm, sizeof(nm), &un) == 0 && un) {
+            skipped++;
+            continue;
+        }
+
+        if (unlock_one(id) == 0) {
+            ok++;
+            Notify(TEX_ICON_SYSTEM, "[%d/%d] id=%d %s", i + 1, n, id, nm);
+        }
+
+        sleep_interruptible(delays[i]);
+    }
+
+    debug_printf("unlock all(order): ok=%d skipped=%d bad=%d n=%d total=%d run=%d\n",
+                 ok, skipped, bad, n, count, g_run);
+
+    if (g_run)
+        Notify(TEX_ICON_SYSTEM, "unlocked %d, already had %d / %d", ok, skipped, count);
+    else
+        debug_printf("interrupted; next run skips unlocked and continues\n");
+}
+
 static void browse(int count)
 {
     uint32_t prev = 0;
@@ -296,7 +376,7 @@ static void browse(int count)
     int confirmAll = 0;
 
     show(idx, count, idx);
-    Notify(TEX_ICON_SYSTEM, "X=unlock   Triangle=all   O=exit");
+    Notify(TEX_ICON_SYSTEM, "X=unlock  Tri=all  Sq=order  O=exit");
 
     while (g_run && active) {
         uint32_t btn = read_buttons();
@@ -332,21 +412,19 @@ static void browse(int count)
                 confirmAll = 1;
                 Notify(TEX_ICON_SYSTEM, "unlock ALL %d trophies? press Triangle again", count);
             } else {
-                int ok = 0, skipped = 0;
-                for (int i = 0; i < count; i++) {
-                    char nm[128] = "";
-                    int un = 0;
-                    if (trophy_info(i, nm, sizeof(nm), &un) == 0 && un) {
-                        skipped++;
-                        continue;
-                    }
-                    if (unlock_one(i) == 0)
-                        ok++;
-                }
-                debug_printf("unlock all: ok=%d skipped=%d total=%d\n", ok, skipped, count);
-                Notify(TEX_ICON_SYSTEM, "unlocked %d, already had %d / %d", ok, skipped, count);
+                unlock_all(count);
                 active = 0;
             }
+        } else if (edge & BTN_SQUARE) {
+            /* 生成这个游戏的解锁顺序文件，再用 FTP 在电脑上改 */
+            confirmAll = 0;
+            int rc = uo_write_template(g_tid, count, 1500);
+            if (rc == 0)
+                Notify(TEX_ICON_SYSTEM, "order created: trophy_order_%s.csv", g_tid);
+            else if (rc == 1)
+                Notify(TEX_ICON_SYSTEM, "order exists: trophy_order_%s.csv", g_tid);
+            else
+                Notify(TEX_ICON_SYSTEM, "cannot write order file");
         } else if (edge & BTN_CIRCLE) {
             active = 0;
         }
@@ -420,6 +498,10 @@ static void *worker(void *arg)
     }
 
     debug_printf("ready: ctx=%d handle=%d\n", g_ctx, g_hdl);
+
+    /* 从游戏自己的 param.sfo 取 TITLE_ID，用来找 /data/GoldHEN/trophy_unlocker/<TID>.csv */
+    if (uo_title_id(g_tid, (int)sizeof(g_tid)) != 0)
+        debug_printf("拿不到 TITLE_ID，顺序文件将不可用，只能按默认顺序解锁\n");
 
     /* 等系统把奖杯集挂好再数，太早会得到 0 */
     sceKernelUsleep(1000000);

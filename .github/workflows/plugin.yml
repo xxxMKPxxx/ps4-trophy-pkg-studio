@@ -1,12 +1,20 @@
 name: build prx
 
-# 只在手动触发时构建：插件代码目前没在改动，不必每次 push 都跑。
+# main 上不动；功能分支（feat/**）推上去会自动构建，方便试新功能。
 on:
+  push:
+    branches:
+      - 'feat/**'
   workflow_dispatch:
 
 jobs:
   prx:
     runs-on: ubuntu-latest
+
+    # 构建后把 prx 和编译日志推到 prx-builds 分支，方便直接取用
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +41,7 @@ jobs:
 
       - name: Build plugin
         working-directory: ps4-trophy-plugin
-        run: make clean && make
+        run: make clean && make 2>&1 | tee ../build.log
 
       - name: List output
         working-directory: ps4-trophy-plugin
@@ -41,7 +49,34 @@ jobs:
 
       - name: Upload prx
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: trophy_unlocker
-          path: ps4-trophy-plugin/*.prx
-          if-no-files-found: error
+          path: |
+            ps4-trophy-plugin/*.prx
+            build.log
+          if-no-files-found: warn
+
+      - name: 发布到 prx-builds 分支
+        if: always()
+        run: |
+          set -e
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+          git checkout --orphan prx-builds
+          git reset
+
+          if ls ps4-trophy-plugin/*.prx >/dev/null 2>&1; then
+            cp ps4-trophy-plugin/*.prx ./trophy_unlocker.prx
+            git add -f trophy_unlocker.prx
+          fi
+          if [ -f build.log ]; then git add -f build.log; fi
+
+          if git diff --cached --quiet; then
+            echo '没有可提交的产物'
+            exit 0
+          fi
+
+          git commit -m "prx ${GITHUB_SHA}"
+          git push -f origin HEAD:refs/heads/prx-builds

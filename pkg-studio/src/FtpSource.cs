@@ -188,6 +188,58 @@ namespace PkgStudio
             return null;
         }
 
+        /// <summary>把 PS4 上的文件下载到本地；失败返回 false。</summary>
+        public static bool TryDownload(string host, string remotePath, string localFile)
+        {
+            try
+            {
+                string url = "ftp://" + host + ":2121" + remotePath;
+                byte[] d = Download(url);
+                if (d == null || d.Length == 0)
+                    return false;
+
+                File.WriteAllBytes(localFile, d);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("下载失败 " + remotePath + " : " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>把本地文件上传到 PS4（GoldHEN FTP 的 STOR）。</summary>
+        public static bool Upload(string host, string remotePath, string localFile)
+        {
+            try
+            {
+                string url = "ftp://" + host + ":2121" + remotePath;
+                byte[] data = File.ReadAllBytes(localFile);
+
+                FtpWebRequest req = (FtpWebRequest)WebRequest.Create(url);
+                req.Credentials = new NetworkCredential("anonymous", "anonymous@");
+                req.Method = WebRequestMethods.Ftp.UploadFile;
+                req.UsePassive = true;
+                req.UseBinary = true;
+                req.KeepAlive = false;
+                req.Timeout = 15000;
+                req.ReadWriteTimeout = 15000;
+
+                using (Stream s = req.GetRequestStream())
+                    s.Write(data, 0, data.Length);
+                using (FtpWebResponse resp = (FtpWebResponse)req.GetResponse())
+                {
+                    Log.Write("已上传 " + remotePath + "（" + data.Length + "B）：" + resp.StatusDescription.Trim());
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("上传失败 " + remotePath + " : " + ex.Message);
+                return false;
+            }
+        }
+
         private static List<string> ListDirs(string url)
         {
             List<string> names = new List<string>();

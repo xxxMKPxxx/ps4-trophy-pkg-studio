@@ -23,7 +23,7 @@ CFLAGS := -D__FINAL__=1 -D__USE_PRINTF__ \
 LDFLAGS := -m elf_x86_64 -pie --script $(TOOLCHAIN)/link.x -e _init \
            --eh-frame-hdr -L$(TOOLCHAIN)/lib -L$(GH_SDK) -L$(GH_SDK)/build $(LIBS)
 
-OBJS := $(INTDIR)/main.o $(INTDIR)/trophy_plugin.o $(INTDIR)/plugin_common.o
+OBJS := $(INTDIR)/main.o $(INTDIR)/trophy_plugin.o $(INTDIR)/plugin_common.o $(INTDIR)/unlock_order.o
 
 all: $(OUTPUT_PRX).prx
 

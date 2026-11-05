@@ -158,6 +158,15 @@ namespace PkgStudio
             grid.Columns.Add(MakeCol("类型", 60, 8));
             grid.Columns.Add(MakeCol("状态", 220, 22));
 
+            // 右键：编辑/上传这个游戏的奖杯解锁顺序表
+            ContextMenuStrip menu = new ContextMenuStrip();
+            ToolStripMenuItem miOrder = new ToolStripMenuItem("解锁顺序表（编辑并上传）");
+            miOrder.Click += OnEditOrder;
+            menu.Items.Add(miOrder);
+            grid.ContextMenuStrip = menu;
+
+            grid.CellMouseDown += OnGridRightClick;
+
             Label lblLeft = new Label();
             lblLeft.Text = "  游戏列表 —— 直接把 .pkg 拖进来（支持多个），或点「导入 PKG」";
             lblLeft.Dock = DockStyle.Top;
@@ -240,6 +249,130 @@ namespace PkgStudio
 
             string[] paths = (string[])e.Data.GetData(DataFormats.FileDrop);
             await ImportAsync(paths);
+        }
+
+        // ---------------- 解锁顺序表 ----------------
+
+        private void OnGridRightClick(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right || e.RowIndex < 0)
+                return;
+
+            grid.ClearSelection();
+            grid.Rows[e.RowIndex].Selected = true;
+        }
+
+        private void OnEditOrder(object sender, EventArgs e)
+        {
+            if (grid.SelectedRows.Count == 0)
+            {
+                Status("先选中一个游戏");
+                return;
+            }
+
+            GameItem it = grid.SelectedRows[0].Tag as GameItem;
+            if (it == null || string.IsNullOrEmpty(it.TitleId))
+            {
+                Status("这个条目没有 Title ID");
+                return;
+            }
+
+            string host = txtHost.Text.Trim();
+            if (host.Length == 0)
+            {
+                MessageBox.Show("先在上方填 PS4 的 IP（GoldHEN FTP 端口 2121）。", "解锁顺序表",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string dir = txtOut.Text.Trim();
+            if (dir.Length == 0)
+                dir = AppDomain.CurrentDomain.BaseDirectory;
+            Directory.CreateDirectory(dir);
+
+            string local = Path.Combine(dir, "trophy_order_" + it.TitleId + ".csv");
+            string remote = "/data/GoldHEN/trophy_order_" + it.TitleId + ".csv";
+
+            if (!File.Exists(local))
+            {
+                if (FtpSource.TryDownload(host, remote, local))
+                {
+                    Log.Write("已从 PS4 下载顺序表: " + remote);
+                    Status("已下载顺序表，改完再右键上传");
+                }
+                else
+                {
+                    File.WriteAllText(local, OrderTemplate(it), new UTF8Encoding(false));
+                    Log.Write("PS4 上没有顺序表，已生成模板: " + local);
+                    Status("已生成模板；在游戏里按 □ 能得到按真实奖杯数排列的版本");
+                }
+
+                OpenInNotepad(local);
+                return;
+            }
+
+            DialogResult r = MessageBox.Show(
+                "本地已有：\r\n" + local + "\r\n\r\n是 = 上传到 PS4（覆盖远端）\r\n否 = 打开编辑",
+                "解锁顺序表", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+
+            if (r == DialogResult.Yes)
+            {
+                int lines = CountOrderLines(local);
+                if (lines <= 0)
+                {
+                    MessageBox.Show("文件里没有有效的「奖杯ID,延迟」行。\r\n先在游戏里按 □ 生成一份再改。",
+                        "解锁顺序表", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (FtpSource.Upload(host, remote, local))
+                    Status("已上传顺序表：" + lines + " 条");
+                else
+                    Status("上传失败，详见 pkgstudio.log");
+            }
+            else if (r == DialogResult.No)
+            {
+                OpenInNotepad(local);
+            }
+        }
+
+        private static void OpenInNotepad(string file)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start("notepad.exe", "\"" + file + "\"");
+            }
+            catch (Exception ex)
+            {
+                Log.Write("打开记事本失败: " + ex.Message);
+            }
+        }
+
+        private static int CountOrderLines(string file)
+        {
+            int n = 0;
+            foreach (string raw in File.ReadAllLines(file))
+            {
+                string s = raw.Trim();
+                if (s.Length == 0 || s.StartsWith("#"))
+                    continue;
+                if (char.IsDigit(s[0]))
+                    n++;
+            }
+            return n;
+        }
+
+        private static string OrderTemplate(GameItem it)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("# " + (it.Title ?? "") + "  " + it.TitleId + " 的奖杯解锁顺序");
+            sb.AppendLine("# 一行一个：奖杯ID,延迟毫秒（延迟 = 解锁这个之后等多久做下一个）");
+            sb.AppendLine("# 0 号通常就是白金，放最后；不想要的奖杯删掉那一行即可");
+            sb.AppendLine("# 在游戏里按 □ 会按真实奖杯数量自动生成一份，那份的 id 更准");
+            sb.AppendLine("1,1500");
+            sb.AppendLine("2,1500");
+            sb.AppendLine("0,2000");
+            return sb.ToString();
         }
 
         // ---------------- 导入 ----------------
