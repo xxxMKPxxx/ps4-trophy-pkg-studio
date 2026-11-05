@@ -103,6 +103,17 @@ namespace PkgStudio
                 string ebootCustom = Path.Combine(templateDir, "eboot.bin");
                 if (File.Exists(ebootCustom))
                 {
+                    // 只认 create-fself 产出的 SCE ELF（e_type=0xFE10）。
+                    // 普通 ELF / SELF 打进去会直接 CE-30045-2，与其装完才失败不如这里就说清楚。
+                    byte[] eh = File.ReadAllBytes(ebootCustom);
+                    if (eh.Length < 20 || eh[0] != 0x7F || eh[1] != (byte)'E' ||
+                        eh[2] != (byte)'L' || eh[3] != (byte)'F' ||
+                        (eh[16] | (eh[17] << 8)) != 0xFE10)
+                    {
+                        log("警告：eboot.bin 不是 SCE ELF，生成的包可能无法启动");
+                        Log.Write("警告：template/eboot.bin 不是 SCE ELF（e_type 应为 0xFE10）");
+                    }
+
                     File.Copy(ebootCustom, Path.Combine(target, "eboot.bin"), true);
                     log("已替换 eboot.bin（解锁器 app）");
                     Log.Write("使用自定义 eboot: " + ebootCustom);
