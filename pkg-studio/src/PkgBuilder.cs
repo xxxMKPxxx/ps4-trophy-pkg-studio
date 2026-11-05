@@ -91,7 +91,7 @@ namespace PkgStudio
                 Directory.CreateDirectory(trophyDir);
                 File.WriteAllBytes(Path.Combine(trophyDir, "trophy00.trp"), it.Trophy);
 
-                // 4.5 自定义 eboot：template 目录下有 eboot.bin 就替换掉模板自带的
+                // 4.5 自定义 eboot（由 unlocker-app 构建，CI 会自动放进 template 目录）：template 目录下有 eboot.bin 就替换掉模板自带的
                 //     （那是"启动即按顺序解锁"的独立 app，替换后 pkg 里跑的就是我们的逻辑）
                 string ebootCustom = Path.Combine(templateDir, "eboot.bin");
                 if (File.Exists(ebootCustom))
