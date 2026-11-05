@@ -160,7 +160,7 @@ namespace PkgStudio
 
             // 右键：编辑/上传这个游戏的奖杯解锁顺序表
             ContextMenuStrip menu = new ContextMenuStrip();
-            ToolStripMenuItem miOrder = new ToolStripMenuItem("解锁顺序表（编辑并上传）");
+            ToolStripMenuItem miOrder = new ToolStripMenuItem("解锁顺序表（编辑，打包时写入 pkg）");
             miOrder.Click += OnEditOrder;
             menu.Items.Add(miOrder);
             grid.ContextMenuStrip = menu;
@@ -277,63 +277,28 @@ namespace PkgStudio
                 return;
             }
 
-            string host = txtHost.Text.Trim();
-            if (host.Length == 0)
-            {
-                MessageBox.Show("先在上方填 PS4 的 IP（GoldHEN FTP 端口 2121）。", "解锁顺序表",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
             string dir = txtOut.Text.Trim();
             if (dir.Length == 0)
                 dir = AppDomain.CurrentDomain.BaseDirectory;
             Directory.CreateDirectory(dir);
 
+            // 放在输出目录：打包时会自动写进 pkg 的 /app0/trophy_order.csv
             string local = Path.Combine(dir, "trophy_order_" + it.TitleId + ".csv");
-            string remote = "/data/GoldHEN/trophy_order_" + it.TitleId + ".csv";
 
+            bool created = false;
             if (!File.Exists(local))
             {
-                if (FtpSource.TryDownload(host, remote, local))
-                {
-                    Log.Write("已从 PS4 下载顺序表: " + remote);
-                    Status("已下载顺序表，改完再右键上传");
-                }
-                else
-                {
-                    File.WriteAllText(local, OrderTemplate(it), new UTF8Encoding(false));
-                    Log.Write("PS4 上没有顺序表，已生成模板: " + local);
-                    Status("已生成模板；在游戏里按 □ 能得到按真实奖杯数排列的版本");
-                }
-
-                OpenInNotepad(local);
-                return;
+                File.WriteAllText(local, OrderTemplate(it), new UTF8Encoding(false));
+                created = true;
+                Log.Write("已生成顺序表模板: " + local);
             }
 
-            DialogResult r = MessageBox.Show(
-                "本地已有：\r\n" + local + "\r\n\r\n是 = 上传到 PS4（覆盖远端）\r\n否 = 打开编辑",
-                "解锁顺序表", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            OpenInNotepad(local);
 
-            if (r == DialogResult.Yes)
-            {
-                int lines = CountOrderLines(local);
-                if (lines <= 0)
-                {
-                    MessageBox.Show("文件里没有有效的「奖杯ID,延迟」行。\r\n先在游戏里按 □ 生成一份再改。",
-                        "解锁顺序表", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                if (FtpSource.Upload(host, remote, local))
-                    Status("已上传顺序表：" + lines + " 条");
-                else
-                    Status("上传失败，详见 pkgstudio.log");
-            }
-            else if (r == DialogResult.No)
-            {
-                OpenInNotepad(local);
-            }
+            if (created)
+                Status("已生成顺序表，改完直接生成 PKG 就会带进包里");
+            else
+                Status("已打开现有顺序表（打 PKG 时会用这个文件）");
         }
 
         private static void OpenInNotepad(string file)
@@ -348,27 +313,13 @@ namespace PkgStudio
             }
         }
 
-        private static int CountOrderLines(string file)
-        {
-            int n = 0;
-            foreach (string raw in File.ReadAllLines(file))
-            {
-                string s = raw.Trim();
-                if (s.Length == 0 || s.StartsWith("#"))
-                    continue;
-                if (char.IsDigit(s[0]))
-                    n++;
-            }
-            return n;
-        }
-
         private static string OrderTemplate(GameItem it)
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("# " + (it.Title ?? "") + "  " + it.TitleId + " 的奖杯解锁顺序");
             sb.AppendLine("# 一行一个：奖杯ID,延迟毫秒（延迟 = 解锁这个之后等多久做下一个）");
             sb.AppendLine("# 0 号通常就是白金，放最后；不想要的奖杯删掉那一行即可");
-            sb.AppendLine("# 在游戏里按 □ 会按真实奖杯数量自动生成一份，那份的 id 更准");
+            sb.AppendLine("# 打包时这个文件会被写进 pkg 的 /app0/trophy_order.csv，启动 Unlocker 就按它解锁");
             sb.AppendLine("1,1500");
             sb.AppendLine("2,1500");
             sb.AppendLine("0,2000");
