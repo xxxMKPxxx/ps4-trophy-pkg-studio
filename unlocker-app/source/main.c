@@ -4,7 +4,7 @@
  * 启动就在系统奖杯管理器里调 sceNpTrophyCreateContext / UnlockTrophy
  * （真解锁，不是 Apollo 那种只改本地显示的 fake unlock）。
  *
- * 界面：手选奖杯按 X 解锁，OPTIONS 一键解锁（按顺序表，带进度和倒计时）。
+ * 界面：手选奖杯按 X 解锁，L1 + ○ 一键解锁（按顺序表，带进度和倒计时）。
  *
  * 顺序表：/app0/trophy_order.csv（PkgStudio 打包时塞进去）
  *   一行一个：奖杯ID,延迟秒    # 注释
@@ -141,10 +141,54 @@ void log_line(const char *fmt, ...)
 
 static void boot_frame(const char *msg, int slot);
 
-/* 所有失败分支都必须走这里：
-   1) 把原因画到屏幕上，别让用户对着「正在读取奖杯…」以为卡死；
-   2) 清理 VideoOut / direct memory。以前失败分支直接 return，
-      没调 gfx_shutdown，进程被系统回收时会报 CE-34878-0。 */
+/* PS4 的 big app **不能从 main 返回**。
+   日志显示所有清理都成功、完整走到 === end ===，用户仍在退出时看到
+   CE-34878-0 —— 崩的是 libc 的 exit / 内核回收进程这一步，不是我们的代码。
+   OpenOrbis 官方 samples/trophies 结尾干脆是 for(;;) 从不返回，就是这个原因。
+
+   正确退出是让 shell 来关应用：
+       sceSystemServiceKillApp(appid, -1, 0, 0)
+   最后一个 0 = core_dump=0，不生成崩溃报告（hbldr / Itemzflow 同款调用）。
+   注意 KillApp 是异步的，调用后绝不能 return，否则又走回 libc exit。
+
+   bye_line != NULL：退出前画一帧告别；NULL：保留当前画面（错误提示）。 */
+static void app_exit(const char *bye_line)
+{
+    if (bye_line && s_boot_font >= 0)
+        boot_frame(bye_line, s_boot_font);
+
+    /* 刚解锁过奖杯时，奖杯服务还在异步写盘；给点时间落盘再退出 */
+    log_str("exit: drain trophy service\n");
+    sceKernelUsleep(1500000);
+
+    log_str("=== end ===\n");
+    if (g_logfd >= 0)
+        sceKernelFsync(g_logfd);
+
+    int32_t appid = sceSystemServiceGetAppIdOfBigApp();
+    log_int("big app id ", (int)appid);
+
+    if (appid > 0) {
+        int r = sceSystemServiceKillApp((uint32_t)appid, -1, 0, 0);
+        log_hex("KillApp ", (uint32_t)r);
+        sceKernelSleep(3);              /* 等 shell 处理关闭请求 */
+    } else {
+        log_str("KillApp skipped (no app id)\n");
+    }
+
+    /* 没被系统关掉：不 return、不清理画面，常驻显示提示，
+       让用户在 PS 菜单里点「关闭应用程序」—— 这条路径同样不会报错。 */
+    if (s_boot_font >= 0)
+        boot_frame("Trophy Unlocker  请按 PS 键 → 关闭应用程序", s_boot_font);
+    log_str("exit: waiting for user close\n");
+    if (g_logfd >= 0)
+        sceKernelFsync(g_logfd);
+
+    for (;;)
+        sceKernelSleep(1);
+}
+
+/* 所有失败分支也必须走 app_exit，不能 return */
 static void hold_and_exit(const char *msg)
 {
     if (msg && s_boot_font >= 0)
@@ -152,9 +196,8 @@ static void hold_and_exit(const char *msg)
     if (g_logfd >= 0)
         sceKernelFsync(g_logfd);
     sceKernelSleep(FAIL_HOLD_SEC);
-    gfx_shutdown();
-    log_str("gfx shutdown ok\n");
     log_str("=== end (failed) ===\n");
+    app_exit(NULL);                     /* 不返回 */
 }
 
 /* 奖杯 context/handle 成对创建，方便注册失败时整体重建 */
@@ -544,15 +587,12 @@ int main(void)
     ui_run();
     log_str("ui returned\n");
 
-    /* 5. 退出清理。官方 samples/trophies 结尾是 for(;;) 从不退出，也从不调
-       DestroyHandle/DestroyContext —— RegisterContext 是异步的，进程收尾时主动销毁
-       容易在内核里踩到还没释放的上下文（CE-34878-0）。这里同样不主动销毁，
-       让系统随进程一起回收。 */
-    gfx_shutdown();
-    log_str("gfx shutdown ok\n");
-
+    /* 5. 退出：不主动销毁奖杯 context（RegisterContext 是异步的，交给系统回收），
+       也**不从 main 返回** —— 由 app_exit() 请求 shell 关闭本应用，
+       之后常驻等待，避免 libc exit 触发 CE-34878-0。 */
     log_str("skip destroy (system reclaims)\n");
-    log_str("=== end ===\n");
 
-    return 0;
+    app_exit("Trophy Unlocker  正在退出…");
+
+    return 0;                            /* 不可达，app_exit 永不返回 */
 }
