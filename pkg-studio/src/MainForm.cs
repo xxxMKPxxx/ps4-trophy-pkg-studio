@@ -14,7 +14,7 @@ namespace PkgStudio
         private ToolStripTextBox txtHost;
         private ToolStripTextBox txtOut;
         private ToolStripTextBox txtTpl;
-        private ToolStripLabel lblStatus;
+        private ToolStripStatusLabel lblStatus;
         private ToolStripButton btnBuild;
 
         private readonly List<GameItem> items = new List<GameItem>();
@@ -63,10 +63,10 @@ namespace PkgStudio
             bar.Padding = new Padding(6, 4, 6, 4);
 
             ToolStripButton btnImport = new ToolStripButton("导入 PKG...");
-            btnImport.Click += delegate { PickPkgs(); };
+            btnImport.Click += OnImportClick;
 
             ToolStripButton btnFtp = new ToolStripButton("扫描 FTP");
-            btnFtp.Click += async delegate { await ScanFtpAsync(); };
+            btnFtp.Click += OnScanFtpClick;
 
             txtHost = new ToolStripTextBox();
             txtHost.Width = 120;
@@ -90,7 +90,7 @@ namespace PkgStudio
 
             btnBuild = new ToolStripButton("生成 PKG");
             btnBuild.Font = new Font(btnBuild.Font, FontStyle.Bold);
-            btnBuild.Click += async delegate { await BuildAsync(); };
+            btnBuild.Click += OnBuildClick;
 
             bar.Items.AddRange(new ToolStripItem[]
             {
@@ -209,7 +209,7 @@ namespace PkgStudio
 
         // ---------------- 导入 ----------------
 
-        private async void PickPkgs()
+        private async void OnImportClick(object sender, EventArgs e)
         {
             using (OpenFileDialog dlg = new OpenFileDialog())
             {
@@ -220,6 +220,16 @@ namespace PkgStudio
                     return;
                 await ImportAsync(dlg.FileNames);
             }
+        }
+
+        private async void OnScanFtpClick(object sender, EventArgs e)
+        {
+            await ScanFtpAsync();
+        }
+
+        private async void OnBuildClick(object sender, EventArgs e)
+        {
+            await BuildAsync();
         }
 
         private async Task ImportAsync(string[] paths)
