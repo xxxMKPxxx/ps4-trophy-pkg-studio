@@ -29,6 +29,37 @@ namespace TrophyUnlocker
     {
         private const uint PSF_MAGIC = 0x46535000;
 
+        // 排查开关：exe 同目录 unlocker.ini 里写 sfofix=0，则完全不碰 param.sfo。
+        // 用来判断"安装失败"是不是这一段重写引起的。
+        private static readonly bool Disabled = ReadDisabled();
+
+        private static bool ReadDisabled()
+        {
+            try
+            {
+                string p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "unlocker.ini");
+                if (!File.Exists(p))
+                    return false;
+
+                foreach (string line in File.ReadAllLines(p))
+                {
+                    string s = line.Trim();
+                    if (s.StartsWith("#") || s.Length == 0)
+                        continue;
+                    int eq = s.IndexOf('=');
+                    if (eq <= 0)
+                        continue;
+                    if (s.Substring(0, eq).Trim().ToLowerInvariant() != "sfofix")
+                        continue;
+                    return s.Substring(eq + 1).Trim() == "0";
+                }
+            }
+            catch
+            {
+            }
+            return false;
+        }
+
         private sealed class Entry
         {
             public string Key;
@@ -110,6 +141,9 @@ namespace TrophyUnlocker
         /// <summary>按 UTF-8 写入字符串字段；失败时保持原文件不变</summary>
         public static void SetString(string path, string key, string value)
         {
+            if (Disabled)
+                return;
+
             byte[] original = File.ReadAllBytes(path);
             byte[] output = SetStringInBytes(original, key, value);
 
