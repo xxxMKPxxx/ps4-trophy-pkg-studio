@@ -309,31 +309,38 @@ namespace PkgStudio
 
                 try
                 {
-                    string path = p;
-                    GameItem full = await Task.Run(() => PkgReader.FromPkg(path, TemplateDir, workRoot));
+                    // 先走 PS4_Tools 的快速读取（和原版一样，秒级）
+                    bool fast = await Task.Run(() => PkgFast.Fill(quick));
 
-                    if (!full.Usable)
+                    if (!fast)
+                    {
+                        // 退回：orbis-pub-cmd 解包（慢，但至少能用）
+                        Log.Write("改用 orbis-pub-cmd 解包: " + p);
+                        string path = p;
+                        GameItem full = await Task.Run(() => PkgReader.FromPkg(path, TemplateDir, workRoot));
+
+                        quick.Title = full.Title;
+                        quick.TitleId = full.TitleId;
+                        quick.ContentId = full.ContentId;
+                        quick.Category = full.Category;
+                        quick.AppVer = full.AppVer;
+                        quick.Kind = full.Kind;
+                        quick.Param = full.Param;
+                        quick.Nptitle = full.Nptitle;
+                        quick.Npbind = full.Npbind;
+                        quick.Trophy = full.Trophy;
+                        quick.CacheDir = full.CacheDir;
+                    }
+
+                    if (!quick.Usable)
                     {
                         notGame++;
-                        notGameTitle = full.Title;
-                        Log.Write("非游戏跳过: " + full.Title + " / " + full.TitleId + " / CATEGORY=" + full.Category);
+                        notGameTitle = quick.Title;
+                        Log.Write("非游戏跳过: " + quick.Title + " / " + quick.TitleId + " / CATEGORY=" + quick.Category);
                         items.Remove(quick);
                         grid.Rows.RemoveAt(row);
                         continue;
                     }
-
-                    // 用解出来的真实数据替换临时行
-                    quick.Title = full.Title;
-                    quick.TitleId = full.TitleId;
-                    quick.ContentId = full.ContentId;
-                    quick.Category = full.Category;
-                    quick.AppVer = full.AppVer;
-                    quick.Kind = full.Kind;
-                    quick.Param = full.Param;
-                    quick.Nptitle = full.Nptitle;
-                    quick.Npbind = full.Npbind;
-                    quick.Trophy = full.Trophy;
-                    quick.CacheDir = full.CacheDir;
 
                     UpdateRow(row, quick);
                     ok++;

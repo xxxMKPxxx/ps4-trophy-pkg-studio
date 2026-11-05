@@ -15,12 +15,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 取上游模板资源
+      - name: 取上游模板资源与依赖
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/xXxTheDarkprogramerxXx/PS4_Tools.git upstream
-          if (-not (Test-Path '.\upstream\TrophyUnlocker\Resources\CONTENTS.zip')) {
+          # 目录名必须是 PS4_Tools，csproj 里引用的是 ..\PS4_Tools\TrophyUnlocker\bin\Release\PS4_Tools.dll
+          git clone --depth 1 https://github.com/xXxTheDarkprogramerxXx/PS4_Tools.git PS4_Tools
+          if (-not (Test-Path '.\PS4_Tools\TrophyUnlocker\Resources\CONTENTS.zip')) {
             throw '上游 Resources 里没有 CONTENTS.zip'
+          }
+          if (-not (Test-Path '.\PS4_Tools\TrophyUnlocker\bin\Release\PS4_Tools.dll')) {
+            throw '上游 bin\Release 里没有 PS4_Tools.dll'
           }
 
       - name: Setup MSBuild
@@ -41,7 +45,7 @@ jobs:
 
           # 模板资源放到 exe 旁边的 template 目录，程序默认从那里读
           New-Item -ItemType Directory -Force -Path "$out\template" | Out-Null
-          Copy-Item '.\upstream\TrophyUnlocker\Resources\*' "$out\template\" -Recurse -Force
+          Copy-Item '.\PS4_Tools\TrophyUnlocker\Resources\*' "$out\template\" -Recurse -Force
 
           Get-ChildItem "$out\template" | Select-Object Name, Length | Format-Table
 

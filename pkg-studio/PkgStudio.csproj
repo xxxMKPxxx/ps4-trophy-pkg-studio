@@ -29,6 +29,11 @@
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
+    <!-- 上游仓库 bin\Release 里自带的预编译库，用来秒读 pkg 元数据 -->
+    <Reference Include="PS4_Tools">
+      <HintPath>..\PS4_Tools\TrophyUnlocker\bin\Release\PS4_Tools.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="src\Program.cs" />
@@ -41,6 +46,7 @@
     <Compile Include="src\Log.cs" />
     <Compile Include="src\Orbis.cs" />
     <Compile Include="src\PkgName.cs" />
+    <Compile Include="src\PkgFast.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

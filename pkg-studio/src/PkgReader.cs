@@ -122,6 +122,9 @@ namespace PkgStudio
             string exe = Orbis.EnsureTool(templateDir, workRoot);
             string tools = Path.GetDirectoryName(exe);
 
+            if (!Directory.Exists(work))
+                Directory.CreateDirectory(work);
+
             string sfoPath = FindFile(work, "param.sfo");
             string dir = sfoPath == null ? null : Path.GetDirectoryName(sfoPath);
 
@@ -146,6 +149,9 @@ namespace PkgStudio
 
             if (dir == null)
                 throw new Exception("缓存里找不到 sce_sys，请重新导入");
+
+            if (it.Param == null)
+                it.Param = File.ReadAllBytes(sfoPath);
 
             it.Nptitle = TryRead(dir, "nptitle.dat");
             it.Npbind = TryRead(dir, "npbind.dat");
