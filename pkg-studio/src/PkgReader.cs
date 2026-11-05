@@ -22,8 +22,8 @@ namespace PkgStudio
 
             Log.Write("导入 pkg: " + pkgPath + "  (" + (fi.Length / 1024 / 1024) + " MB)");
 
-            // orbis 打不开 UNC 路径和中文路径，必要时先复制成本地 ASCII 路径
-            string srcPkg = PrepareSource(pkgPath, workRoot);
+            // 就地读，不复制。包有多大都不动它，只在旁边解出 sce_sys 那几个小文件。
+            string srcPkg = pkgPath;
 
             Stopwatch watch = Stopwatch.StartNew();
             string sfoPath = FindFile(work, "param.sfo");
@@ -126,7 +126,9 @@ namespace PkgStudio
 
             string exe = Orbis.EnsureTool(templateDir, workRoot);
             string tools = Path.GetDirectoryName(exe);
-            string srcPkg = PrepareSource(it.Origin, workRoot);
+
+            // 就地读原件，不复制（包可能几十 GB）
+            string srcPkg = it.Origin;
 
             if (!Directory.Exists(work))
                 Directory.CreateDirectory(work);
@@ -197,8 +199,10 @@ namespace PkgStudio
             if (sfoPath == null)
             {
                 throw new Exception("解包后仍然找不到 param.sfo。\r\n"
-                    + "常见原因：这个包不是 fpkg（零售原包没有 passcode 解不开），或磁盘空间不足（缓存目录 "
-                    + work + "）。\r\n\r\n"
+                    + "1) 这个包可能不是 fpkg（零售原包没有 passcode 解不开）\r\n"
+                    + "2) 或者是 orbis-pub-cmd 打不开这个路径（网络盘 \\\\主机\\... 或路径里含中文）。\r\n"
+                    + "   这种情况不用复制整个包，用 net use 映射一个盘符（如 Z:）再用 Z:\\ 打开即可。\r\n"
+                    + "3) 或磁盘空间不足，当前缓存目录 " + work + "\r\n\r\n"
                     + "orbis-pub-cmd 输出：\r\n" + Trim(lastExtractOutput));
             }
 
@@ -252,8 +256,18 @@ namespace PkgStudio
                 return ex.Message;
             }
 
+            int files = CountFiles(sub);
             Log.Write("选择性解包 " + selector + " 用时 " + watch.ElapsedMilliseconds + " ms，落地 "
-                + CountFiles(sub) + " 个文件");
+                + files + " 个文件");
+
+            if (files == 0)
+            {
+                string o = (outText ?? "").Trim();
+                if (o.Length > 0)
+                    Log.Write("  orbis 输出: " + (o.Length > 300 ? o.Substring(0, 300) : o));
+                else
+                    Log.Write("  orbis 没有任何输出，通常是它没能打开包（网络路径 / 中文路径 / 权限）");
+            }
 
             return outText;
         }
@@ -311,55 +325,6 @@ namespace PkgStudio
         {
             if (string.IsNullOrEmpty(s)) return "(无输出)";
             return s.Length > 1200 ? s.Substring(0, 1200) : s;
-        }
-
-        /// <summary>
-        /// orbis-pub-cmd 是老的 Sony 工具，对 UNC 路径（\\nas\...）和含中文的路径
-        /// 基本打不开文件。遇到这种就把包先复制到本地纯 ASCII 路径再用。
-        /// </summary>
-        private static string PrepareSource(string pkgPath, string workRoot)
-        {
-            if (!pkgPath.StartsWith("\\\\") && !HasNonAscii(pkgPath))
-                return pkgPath;
-
-            string dir = Path.Combine(workRoot, "src");
-            Directory.CreateDirectory(dir);
-
-            string dest = Path.Combine(dir, Fnv(pkgPath).ToString("x8") + ".pkg");
-            FileInfo src = new FileInfo(pkgPath);
-
-            if (File.Exists(dest) && new FileInfo(dest).Length == src.Length)
-                return dest;
-
-            Log.Write("源路径是网络路径或含中文，先复制到本地：" + dest
-                + "（" + (src.Length / 1024 / 1024) + " MB）");
-
-            Stopwatch w = Stopwatch.StartNew();
-            File.Copy(pkgPath, dest, true);
-            Log.Write("复制完成，用时 " + w.ElapsedMilliseconds + " ms");
-
-            return dest;
-        }
-
-        private static bool HasNonAscii(string s)
-        {
-            foreach (char c in s)
-            {
-                if (c > 127)
-                    return true;
-            }
-            return false;
-        }
-
-        private static uint Fnv(string s)
-        {
-            uint h = 2166136261u;
-            foreach (char c in s.ToLowerInvariant())
-            {
-                h ^= c;
-                h *= 16777619u;
-            }
-            return h;
         }
 
         /// <summary>整包解压前先看空间，否则 orbis 只会默默失败。</summary>
