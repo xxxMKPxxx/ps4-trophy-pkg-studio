@@ -24,18 +24,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 先建日志：后面任何一步失败，这一步产生的文件也会被推到 app-builds，
+      # 否则失败时分支不变，外面根本看不出跑没跑
+      - name: 初始化构建日志
+        run: |
+          echo "run start $(date -u) ${GITHUB_SHA}" > app-build.log
+          echo "runner $(uname -a)" >> app-build.log
+
       - name: Install llvm/lld
-        run: sudo apt-get update && sudo apt-get install -y llvm lld
+        run: |
+          set -x
+          sudo apt-get update 2>&1 | tail -20
+          sudo apt-get install -y llvm lld 2>&1 | tail -20
+          clang --version || true
+          ld.lld --version || true
 
       - name: Download OpenOrbis toolchain
         working-directory: unlocker-app
         run: |
-          curl -sL https://github.com/illusion0001/OpenOrbis-PS4-Toolchain/releases/latest/download/toolchain.tar.gz | tar xz -C ./
+          set -e
+          curl -fL --retry 3 -o /tmp/toolchain.tar.gz \
+            https://github.com/illusion0001/OpenOrbis-PS4-Toolchain/releases/latest/download/toolchain.tar.gz
+          ls -l /tmp/toolchain.tar.gz
+          tar xzf /tmp/toolchain.tar.gz -C ./
+          ls OpenOrbis/PS4Toolchain/bin/linux
           echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/unlocker-app/OpenOrbis/PS4Toolchain" >> $GITHUB_ENV
 
       - name: Build eboot
         working-directory: unlocker-app
-        run: make clean && make 2>&1 | tee ../app-build.log
+        run: |
+          {
+            echo "=== $(date -u) build start ==="
+            make clean && make
+          } 2>&1 | tee ../app-build.log
 
       - name: 检查产物（必须是 SCE ELF，带 SCE 段）
         working-directory: unlocker-app
