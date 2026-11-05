@@ -22,8 +22,11 @@ namespace PkgStudio
 
             Log.Write("导入 pkg: " + pkgPath + "  (" + (fi.Length / 1024 / 1024) + " MB)");
 
-            // 就地读，不复制。包有多大都不动它，只在旁边解出 sce_sys 那几个小文件。
-            string srcPkg = pkgPath;
+            // 就地读，不复制。UNC 路径和中文目录换成 orbis 能接受的写法（映射盘符 / 8.3 短名）
+            string how;
+            string srcPkg = PathHelper.ForOrbis(pkgPath, out how);
+            if (how != "原样")
+                Log.Write("路径处理(" + how + "): " + srcPkg);
 
             Stopwatch watch = Stopwatch.StartNew();
             string sfoPath = FindFile(work, "param.sfo");
@@ -127,8 +130,11 @@ namespace PkgStudio
             string exe = Orbis.EnsureTool(templateDir, workRoot);
             string tools = Path.GetDirectoryName(exe);
 
-            // 就地读原件，不复制（包可能几十 GB）
-            string srcPkg = it.Origin;
+            // 就地读原件，不复制（包可能几十 GB）。路径按 orbis 的要求改写。
+            string how;
+            string srcPkg = PathHelper.ForOrbis(it.Origin, out how);
+            if (how != "原样")
+                Log.Write("路径处理(" + how + "): " + srcPkg);
 
             if (!Directory.Exists(work))
                 Directory.CreateDirectory(work);
@@ -267,6 +273,12 @@ namespace PkgStudio
                     Log.Write("  orbis 输出: " + (o.Length > 300 ? o.Substring(0, 300) : o));
                 else
                     Log.Write("  orbis 没有任何输出，通常是它没能打开包（网络路径 / 中文路径 / 权限）");
+
+                if (o.IndexOf("in_path or out_path is invalid", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    Log.Write("  → 它不接受这个“包路径 + 内部选择器”的组合，尝试整包解压");
+                    Log.Write("     输入: " + pkgPath + selector);
+                }
             }
 
             return outText;

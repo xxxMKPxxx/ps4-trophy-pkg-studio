@@ -46,6 +46,7 @@
     <Compile Include="src\GameItem.cs" />
     <Compile Include="src\Sfo.cs" />
     <Compile Include="src\PkgReader.cs" />
+    <Compile Include="src\PathHelper.cs" />
     <Compile Include="src\FtpSource.cs" />
     <Compile Include="src\PkgBuilder.cs" />
     <Compile Include="src\Log.cs" />
