@@ -16,8 +16,8 @@
 TOOLCHAIN ?= $(OO_PS4_TOOLCHAIN)
 INTDIR    := build
 
-# NpTrophy 用 dlsym 取地址，所以不用 -lSceNpTrophy；UserService 直接链接
-LIBS := -lc -lkernel -lSceUserService
+# 直接链接官方 stub（samples/trophies 就是这么链的），不再 dlsym 猜原型
+LIBS := -lc -lkernel -lSceUserService -lSceSysmodule -lSceNpTrophy
 
 CFLAGS := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -Wall \
           -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include
