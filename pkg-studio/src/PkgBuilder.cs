@@ -28,9 +28,8 @@ namespace PkgStudio
             if (gp4Src == null)
                 throw new Exception("模板目录里找不到 .gp4 工程文件");
 
-            string orbis = Path.Combine(templateDir, "orbis-pub-cmd.exe");
-            if (!File.Exists(orbis))
-                orbis = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "orbis-pub-cmd.exe");
+            string orbis = Orbis.EnsureTool(templateDir, workRoot);
+            string tools = Path.GetDirectoryName(orbis);
 
             string work = Path.Combine(workRoot, "build_" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(work);
@@ -106,8 +105,8 @@ namespace PkgStudio
                 HashSet<string> before = new HashSet<string>(
                     Directory.GetFiles(outDir, "*.pkg"), StringComparer.OrdinalIgnoreCase);
 
-                string output = PkgReader.Orb(orbis,
-                    "img_create --oformat pkg \"" + gp4 + "\" \"" + outDir + "\"", work);
+                string output = Orbis.Run(orbis,
+                    "img_create --oformat pkg \"" + gp4 + "\" \"" + outDir + "\"", tools);
                 Log.Write("img_create 输出: " + (string.IsNullOrEmpty(output) ? "(空)" : Trim(output)));
 
                 string made = null;

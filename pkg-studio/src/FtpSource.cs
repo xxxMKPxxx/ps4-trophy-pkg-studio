@@ -57,6 +57,7 @@ namespace PkgStudio
                         GameItem it = new GameItem();
                         it.Source = "FTP";
                         it.Origin = url + n;
+                        it.RootUrl = root;
                         it.Param = param;
                         it.Title = Sfo.Get(param, "TITLE");
                         it.TitleId = Sfo.Get(param, "TITLE_ID");
@@ -67,6 +68,13 @@ namespace PkgStudio
 
                         if (string.IsNullOrEmpty(it.TitleId))
                             throw new Exception("没有 TITLE_ID");
+
+                        // 只要 CUS 开头的零售 Title ID；更新包不列出来
+                        if (!it.TitleId.StartsWith("CUS", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (it.Kind == GameKind.Update)
+                            continue;
+
                         if (!seen.Add(it.TitleId))
                             continue;
 
@@ -106,17 +114,16 @@ namespace PkgStudio
             if (npwr == null)
                 throw new Exception("npbind.dat 里找不到 NPWRxxxxx");
 
-            int idx = url.IndexOf("appmeta/", StringComparison.OrdinalIgnoreCase);
-            if (idx < 0)
-                throw new Exception("远端路径格式异常: " + url);
+            string root = it.RootUrl;
+            if (string.IsNullOrEmpty(root))
+                throw new Exception("缺少 FTP 根路径（请重新扫描一次）");
 
-            string baseUrl = url.Substring(0, idx);
-
-            // 奖杯目录名可能是 NPWR12345 或 NPWR12345_00，两种都试
+            // 奖杯不在 appmeta 下面，而是根目录的 /user/trophy/conf/<NPWR>/TROPHY.TRP
+            // 目录名可能是 NPWR12345 或 NPWR12345_00，两种都试
             string[] ids = new string[] { npwr, npwr + "_00" };
             foreach (string id in ids)
             {
-                byte[] t = Download(baseUrl + "user/trophy/conf/" + id + "/TROPHY.TRP");
+                byte[] t = Download(root + "user/trophy/conf/" + id + "/TROPHY.TRP");
                 if (t != null && t.Length > 0)
                 {
                     it.Trophy = t;
@@ -127,7 +134,7 @@ namespace PkgStudio
 
             if (it.Trophy == null || it.Trophy.Length == 0)
                 throw new Exception("TROPHY.TRP 取不到，试过 " + string.Join(" 和 ", ids)
-                    + "（远端 " + baseUrl + "user/trophy/conf/）");
+                    + "（远端 " + root + "user/trophy/conf/）");
 
             log("已补齐 " + it.TitleId + " 的奖杯文件 (" + npwr + ")");
         }

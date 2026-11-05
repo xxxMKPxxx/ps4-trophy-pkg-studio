@@ -7,7 +7,7 @@ namespace PkgStudio
     internal static class PkgReader
     {
         /// <summary>从 pkg 文件导入：解包 → 读 param.sfo 和另外三个文件。</summary>
-        public static GameItem FromPkg(string pkgPath, string orbisExe, string workRoot)
+        public static GameItem FromPkg(string pkgPath, string templateDir, string workRoot)
         {
             if (!File.Exists(pkgPath))
                 throw new Exception("文件不存在: " + pkgPath);
@@ -15,10 +15,13 @@ namespace PkgStudio
             string tmp = Path.Combine(workRoot, "import_" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(tmp);
 
+            string exe = Orbis.EnsureTool(templateDir, workRoot);
+            string tools = Path.GetDirectoryName(exe);
+
             Log.Write("导入 pkg: " + pkgPath);
-            string orbOut = Orb(orbisExe,
+            string orbOut = Orbis.Run(exe,
                 "img_extract --passcode 00000000000000000000000000000000 \"" + pkgPath + "\" \"" + tmp + "\"",
-                workRoot);
+                tools);
 
             if (!string.IsNullOrEmpty(orbOut))
                 Log.Write("img_extract 输出: " + orbOut.Trim());
@@ -63,23 +66,7 @@ namespace PkgStudio
 
         public static string Orb(string exe, string args, string workDir)
         {
-            if (!File.Exists(exe))
-                throw new Exception("找不到 orbis-pub-cmd.exe: " + exe);
-
-            ProcessStartInfo psi = new ProcessStartInfo(exe, args);
-            psi.UseShellExecute = false;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            psi.CreateNoWindow = true;
-            psi.WorkingDirectory = workDir;
-
-            using (Process p = Process.Start(psi))
-            {
-                string o = p.StandardOutput.ReadToEnd();
-                string e = p.StandardError.ReadToEnd();
-                p.WaitForExit();
-                return o + e;
-            }
+            return Orbis.Run(exe, args, workDir);
         }
 
         public static string FindFile(string root, string name)

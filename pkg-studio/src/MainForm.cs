@@ -238,20 +238,44 @@ namespace PkgStudio
 
         private async Task ImportAsync(string[] paths)
         {
-            int ok = 0, bad = 0;
-            List<string> errs = new List<string>();
-            SetBusy(true, "导入中…");
-
+            List<string> pkgs = new List<string>();
             foreach (string p in paths)
             {
-                if (!p.EndsWith(".pkg", StringComparison.OrdinalIgnoreCase))
-                    continue;
+                if (p.EndsWith(".pkg", StringComparison.OrdinalIgnoreCase))
+                    pkgs.Add(p);
+            }
 
+            if (pkgs.Count == 0)
+            {
+                if (paths.Length == 1)
+                    MessageBox.Show("拖进来的不是 .pkg 文件。", "导入",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            int ok = 0, notGame = 0, bad = 0;
+            string singleError = null;
+            string notGameTitle = null;
+
+            SetBusy(true, "导入中…");
+
+            foreach (string p in pkgs)
+            {
                 Status("导入 " + Path.GetFileName(p) + " …");
                 try
                 {
                     string path = p;
-                    GameItem it = await Task.Run(() => PkgReader.FromPkg(path, OrbisExe, workRoot));
+                    GameItem it = await Task.Run(() => PkgReader.FromPkg(path, TemplateDir, workRoot));
+
+                    // 更新 / DLC 不进列表，只计数
+                    if (!it.Usable)
+                    {
+                        notGame++;
+                        notGameTitle = it.Title;
+                        Log.Write("非游戏跳过: " + it.Title + " / " + it.TitleId + " / CATEGORY=" + it.Category);
+                        continue;
+                    }
+
                     AddRow(it);
                     ok++;
                 }
@@ -259,14 +283,29 @@ namespace PkgStudio
                 {
                     bad++;
                     Log.Error("导入 " + Path.GetFileName(p), ex);
-                    errs.Add(Path.GetFileName(p) + "\r\n" + ex.Message);
+                    singleError = Path.GetFileName(p) + "\r\n\r\n" + ex.Message;
                     Status("导入失败 " + Path.GetFileName(p) + " : " + FirstLine(ex.Message));
                 }
             }
 
-            SetBusy(false, "导入完成：成功 " + ok + " 个，失败 " + bad + " 个");
-            if (errs.Count > 0)
-                ShowErrors("导入失败", errs);
+            SetBusy(false, "导入完成：成功 " + ok + "，非游戏 " + notGame + "，失败 " + bad);
+
+            // 单个拖拽给明确原因；批量只在下方报数量
+            if (pkgs.Count == 1)
+            {
+                if (notGame == 1)
+                {
+                    MessageBox.Show("这不是游戏本体"
+                        + (string.IsNullOrEmpty(notGameTitle) ? "" : "（" + notGameTitle + "）")
+                        + "，可能是更新或 DLC，不能用来做奖杯包。",
+                        "不是游戏", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else if (bad == 1 && singleError != null)
+                {
+                    MessageBox.Show(singleError, "导入失败",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
         }
 
         private void ClearList()
