@@ -37,4 +37,47 @@ internal static class TitleIdUtil
     {
         return ForGame(gameTitleId) + "_00";
     }
+
+    /// <summary>
+    /// pkg 文件名用的安全名：只保留 ASCII 字母数字、空格、- 和 _。
+    ///
+    /// 为什么不用 Unicode：显示名走 param.sfo 的 TITLE（UTF-8，XMB 里正确），
+    /// 而文件名要经过 Windows 文件系统、exFAT U 盘、PS4 的安装器三道手。
+    /// 中文/日文文件名在最后一步可能被拒，表现为"无法安装"却又没有具体原因。
+    /// 所以文件名一律 ASCII，且带上 Title ID 保证唯一、可回溯。
+    /// </summary>
+    public static string SafePkgName(string title, string titleId)
+    {
+        var sb = new System.Text.StringBuilder();
+        if (!string.IsNullOrEmpty(title))
+        {
+            foreach (char c in title)
+            {
+                if ((c >= '0' && c <= '9') ||
+                    (c >= 'A' && c <= 'Z') ||
+                    (c >= 'a' && c <= 'z') ||
+                    c == ' ' || c == '-' || c == '_')
+                {
+                    sb.Append(c);
+                }
+                else if (char.IsWhiteSpace(c))
+                {
+                    sb.Append(' ');
+                }
+            }
+        }
+
+        string s = sb.ToString().Trim();
+        while (s.Contains("  "))
+            s = s.Replace("  ", " ");
+        if (s.Length > 60)
+            s = s.Substring(0, 60).Trim();
+        if (s.Length == 0)
+            s = "Unlocker";
+
+        if (!string.IsNullOrEmpty(titleId))
+            s = s + "_" + titleId;
+
+        return s;
+    }
 }
