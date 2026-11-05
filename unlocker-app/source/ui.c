@@ -7,6 +7,10 @@
  *   L1 + ○     一键解锁（按顺序表；运行中再按 = 停止）
  *   △          刷新解锁状态
  *   ○          退出（完成界面里 ○ 退回列表）
+ *
+ * 计时一律用 sceKernelGetProcessTime()（微秒，单调），不按帧数：
+ * 一帧实际要 60ms 以上（画 1920x1080 + 逐字渲染 + 等 flip），
+ * 按「50 帧 = 1 秒」算会让表里的 1 秒变成实际 3 秒多。
  */
 #include <stdarg.h>
 #include <stdint.h>
@@ -30,12 +34,17 @@
 #define GREEN       GFX_RGB(78, 201, 126)
 #define YELLOW      GFX_RGB(240, 196, 92)
 
-#define TICKS_PER_SEC 50          /* 主循环 20ms 一跳 */
-#define ROW_H         56
-#define LIST_TOP      176
-#define LIST_ROWS     14
-#define LIST_X        96
-#define LIST_W        (GFX_WIDTH - 96 * 2)
+#define US_PER_SEC  1000000ULL
+#define ROW_H       56
+#define LIST_TOP    176
+#define LIST_ROWS   14
+#define LIST_X      96
+#define LIST_W      (GFX_WIDTH - 96 * 2)
+
+/* 关键文字全部放在左半边：部分电视/截图会裁掉右侧，贴右对齐的文字会看不见 */
+#define SAFE_TEXT_W 1200
+#define STATUS_X    (LIST_X + 1320)
+#define BAR_W       1480
 
 static int s_font_title = -1;
 static int s_font_row = -1;
@@ -48,12 +57,18 @@ static int s_plan_id[512];
 static int s_plan_delay[512];
 static int s_plan_len;
 static int s_plan_pos;
-static int s_wait_ticks;
+static uint64_t s_wait_until;     /* 绝对时间，0 = 不用等 */
 static int s_ok, s_skip, s_fail;
-static int s_toast_ticks;
+static uint64_t s_toast_until;
+static uint64_t s_l1_until;       /* L1 松开后的组合键宽容窗口 */
 static char s_toast[192];
 
 /* ---------------- 小工具 ---------------- */
+
+static uint64_t now_us(void)
+{
+    return sceKernelGetProcessTime();
+}
 
 static void toast(const char *fmt, ...)
 {
@@ -63,7 +78,7 @@ static void toast(const char *fmt, ...)
     vsnprintf(s_toast, sizeof(s_toast), fmt, ap);
     va_end(ap);
 
-    s_toast_ticks = 3 * TICKS_PER_SEC;
+    s_toast_until = now_us() + 3ULL * US_PER_SEC;
 }
 
 static int clamp(int v, int lo, int hi)
@@ -73,30 +88,13 @@ static int clamp(int v, int lo, int hi)
     return v;
 }
 
-/* ---------------- 绘制 ---------------- */
-
-static void text_fit(int slot, int x, int y, int max_w, const char *s, uint32_t color)
+/* 所有文字统一走这里：限宽 + 超出补省略号 + 绝不画到屏幕外 */
+static void text(int slot, int x, int y, int max_w, const char *s, uint32_t color)
 {
-    char buf[512];
-    int limit = font_fit_chars(slot, s, max_w);
-    int i = 0;
-    const char *p = s;
-
-    while (*p && i < limit && i < (int)sizeof(buf) - 4) {
-        unsigned char c = (unsigned char)*p;
-        int len = 1;
-
-        if (c >= 0xF0) len = 4;
-        else if (c >= 0xE0) len = 3;
-        else if (c >= 0xC0) len = 2;
-
-        for (int k = 0; k < len && *p; k++)
-            buf[i++] = *p++;
-    }
-
-    buf[i] = 0;
-    font_draw(slot, x, y, buf, color);
+    font_draw_fit(slot, x, y, max_w, s, color);
 }
+
+/* ---------------- 绘制 ---------------- */
 
 static void draw_header(int total, int unlocked)
 {
@@ -105,13 +103,14 @@ static void draw_header(int total, int unlocked)
     gfx_fill(0, 0, GFX_WIDTH, 120, PANEL);
     gfx_fill(0, 118, GFX_WIDTH, 2, ACCENT);
 
-    font_draw(s_font_title, LIST_X, 30, "奖杯解锁器", TEXT);
+    text(s_font_title, LIST_X, 26, 420, "奖杯解锁器", TEXT);
 
     snprintf(buf, sizeof(buf), "用户 %d", api_user_id());
-    font_draw(s_font_small, LIST_X + 300, 46, buf, TEXT_DIM);
+    text(s_font_small, LIST_X + 320, 42, 300, buf, TEXT_DIM);
 
+    /* 原来贴着右边缘画，右半边被裁时只剩「已解」两个字 */
     snprintf(buf, sizeof(buf), "已解锁 %d / %d", unlocked, total);
-    font_draw(s_font_small, GFX_WIDTH - LIST_X - font_text_width(s_font_small, buf), 46, buf, GREEN);
+    text(s_font_small, LIST_X + 660, 42, 420, buf, GREEN);
 }
 
 static void draw_row(int y, int id, const char *name, int is_unlocked, int selected)
@@ -123,60 +122,82 @@ static void draw_row(int y, int id, const char *name, int is_unlocked, int selec
         gfx_fill(LIST_X, y, 6, ROW_H - 6, ACCENT);
 
     snprintf(buf, sizeof(buf), "%03d", id);
-    font_draw(s_font_small, LIST_X + 26, y + 14, buf, selected ? ACCENT : TEXT_DIM);
+    text(s_font_small, LIST_X + 26, y + 14, 90, buf, selected ? ACCENT : TEXT_DIM);
 
-    text_fit(s_font_row, LIST_X + 116, y + 6, LIST_W - 380, name, is_unlocked ? TEXT_DIM : TEXT);
+    text(s_font_row, LIST_X + 116, y + 6,
+         STATUS_X - (LIST_X + 116) - 32, name, is_unlocked ? TEXT_DIM : TEXT);
 
-    if (is_unlocked) {
-        const char *s = "已解锁";
-        font_draw(s_font_small, LIST_X + LIST_W - font_text_width(s_font_small, s) - 26, y + 14, s, GREEN);
-    }
+    if (is_unlocked)
+        text(s_font_small, STATUS_X, y + 14, 180, "已解锁", GREEN);
 }
 
 static void draw_footer(void)
 {
     gfx_fill(0, GFX_HEIGHT - 96, GFX_WIDTH, 96, PANEL);
-    font_draw(s_font_small, LIST_X, GFX_HEIGHT - 70,
-              "↑↓ 选择   L2/R2 翻页   X 解锁   L1+○ 一键解锁   △ 刷新   ○ 退出", TEXT_DIM);
+    text(s_font_small, LIST_X, GFX_HEIGHT - 70, SAFE_TEXT_W + 400,
+         "↑↓ 选择   L2/R2 翻页   X 解锁   L1+○ 一键解锁   △ 刷新   ○ 退出", TEXT_DIM);
+}
+
+/* 取计划里某个位置的名字，取不到就给个占位 */
+static void plan_name(int id, char *out, int cap, int *unlocked)
+{
+    if (id < 0 || api_get(id, out, cap, unlocked) != 0 || !out[0])
+        snprintf(out, (size_t)cap, "（无名称）");
 }
 
 static void draw_auto_panel(void)
 {
     int y = GFX_HEIGHT - 300;
-    int bar_y = y + 150;
+    int bar_y = y + 166;
     int done = s_plan_pos > s_plan_len ? s_plan_len : s_plan_pos;
+    uint64_t t = now_us();
+    int cur_id = (s_plan_pos < s_plan_len) ? s_plan_id[s_plan_pos] : -1;
     char buf[320];
     char name[128];
-    int name_id = (s_plan_pos < s_plan_len) ? s_plan_id[s_plan_pos] : -1;
     int u = 0;
+    int pct = s_plan_len > 0 ? done * 100 / s_plan_len : 0;
 
     gfx_fill(0, y, GFX_WIDTH, 300, PANEL);
     gfx_fill(0, y, GFX_WIDTH, 2, ACCENT);
 
-    if (name_id >= 0 && api_get(name_id, name, sizeof(name), &u) == 0)
-        snprintf(buf, sizeof(buf), "正在解锁  第 %d / %d 个：%s", s_plan_pos + 1, s_plan_len, name);
+    /* 第一行：进度 + ID（用户要求一键解锁这里也显示奖杯 ID） */
+    if (cur_id >= 0)
+        snprintf(buf, sizeof(buf), "一键解锁   第 %d / %d 个    ID %03d",
+                 s_plan_pos + 1, s_plan_len, cur_id);
     else
-        snprintf(buf, sizeof(buf), "正在解锁  第 %d / %d 个", s_plan_pos + 1, s_plan_len);
+        snprintf(buf, sizeof(buf), "一键解锁   第 %d / %d 个", s_plan_pos + 1, s_plan_len);
+    text(s_font_row, LIST_X, y + 20, SAFE_TEXT_W, buf, TEXT);
 
-    text_fit(s_font_row, LIST_X, y + 40, LIST_W - 120, buf, TEXT);
-
-    if (s_wait_ticks > 0) {
-        int sec = (s_wait_ticks + TICKS_PER_SEC - 1) / TICKS_PER_SEC;
-        snprintf(buf, sizeof(buf), "下一个 %d 秒后解锁…", sec);
-        font_draw(s_font_small, LIST_X, y + 100, buf, YELLOW);
+    /* 第二行：这个 ID 的名字 */
+    if (cur_id >= 0) {
+        plan_name(cur_id, name, sizeof(name), &u);
+        snprintf(buf, sizeof(buf), "名称：%s%s", name, u ? "   （已解锁，将跳过）" : "");
     } else {
-        font_draw(s_font_small, LIST_X, y + 100, "解锁中…", YELLOW);
+        snprintf(buf, sizeof(buf), "名称：—");
+    }
+    text(s_font_small, LIST_X, y + 70, SAFE_TEXT_W, buf, TEXT_DIM);
+
+    /* 第三行：真实秒数倒计时 + 下一个 ID */
+    if (s_wait_until > t) {
+        uint64_t rem = s_wait_until - t;
+        int sec = (int)((rem + US_PER_SEC - 1) / US_PER_SEC);
+        snprintf(buf, sizeof(buf), "等待 %d 秒    下一个 ID %03d", sec,
+                 cur_id >= 0 ? cur_id : 0);
+        text(s_font_small, LIST_X, y + 112, SAFE_TEXT_W, buf, YELLOW);
+    } else {
+        text(s_font_small, LIST_X, y + 112, SAFE_TEXT_W, "正在解锁…", YELLOW);
     }
 
-    gfx_fill(LIST_X, bar_y, LIST_W - 96, 18, PANEL2);
+    gfx_fill(LIST_X, bar_y, BAR_W, 18, PANEL2);
     if (s_plan_len > 0)
-        gfx_fill(LIST_X, bar_y, (LIST_W - 96) * done / s_plan_len, 18, ACCENT);
+        gfx_fill(LIST_X, bar_y, BAR_W * done / s_plan_len, 18, ACCENT);
 
-    snprintf(buf, sizeof(buf), "%d%%", s_plan_len > 0 ? done * 100 / s_plan_len : 0);
-    font_draw(s_font_small, LIST_X + LIST_W - 80, bar_y - 4, buf, TEXT_DIM);
+    snprintf(buf, sizeof(buf), "%d%%", pct);
+    text(s_font_small, LIST_X + BAR_W + 24, bar_y - 6, 140, buf, TEXT_DIM);
 
-    snprintf(buf, sizeof(buf), "成功 %d   跳过 %d   失败 %d      （L1+○ 停止）", s_ok, s_skip, s_fail);
-    font_draw(s_font_small, LIST_X, y + 200, buf, TEXT_DIM);
+    snprintf(buf, sizeof(buf), "成功 %d   跳过 %d   失败 %d      （L1+○ 停止）",
+             s_ok, s_skip, s_fail);
+    text(s_font_small, LIST_X, y + 226, SAFE_TEXT_W, buf, TEXT_DIM);
 }
 
 static void draw_done_panel(void)
@@ -187,28 +208,31 @@ static void draw_done_panel(void)
     gfx_fill(0, y, GFX_WIDTH, 300, PANEL);
     gfx_fill(0, y, GFX_WIDTH, 2, GREEN);
 
-    font_draw(s_font_row, LIST_X, y + 40, "完成", GREEN);
+    text(s_font_row, LIST_X, y + 40, SAFE_TEXT_W, "完成", GREEN);
 
-    snprintf(buf, sizeof(buf), "成功解锁 %d 个，跳过已解锁 %d 个，失败 %d 个", s_ok, s_skip, s_fail);
-    font_draw(s_font_small, LIST_X, y + 110, buf, TEXT);
+    snprintf(buf, sizeof(buf), "成功解锁 %d 个，跳过已解锁 %d 个，失败 %d 个",
+             s_ok, s_skip, s_fail);
+    text(s_font_small, LIST_X, y + 110, SAFE_TEXT_W, buf, TEXT);
 
-    font_draw(s_font_small, LIST_X, y + 180, "○ 退出    X 返回列表", TEXT_DIM);
+    text(s_font_small, LIST_X, y + 180, SAFE_TEXT_W, "○ 退出    X 返回列表", TEXT_DIM);
 }
 
 static void draw_toast(void)
 {
-    int w, x, y;
+    int w;
+    uint64_t t = now_us();
 
-    if (s_toast_ticks <= 0 || !s_toast[0])
+    if (t >= s_toast_until || !s_toast[0])
         return;
 
+    /* 左对齐固定位置：居中框在右侧被裁时看不见 */
     w = font_text_width(s_font_small, s_toast) + 64;
-    x = (GFX_WIDTH - w) / 2;
-    y = 140;
+    if (w > SAFE_TEXT_W)
+        w = SAFE_TEXT_W;
 
-    gfx_fill(x, y, w, 56, PANEL2);
-    gfx_frame_rect(x, y, w, 56, 2, ACCENT);
-    font_draw(s_font_small, x + 32, y + 14, s_toast, TEXT);
+    gfx_fill(LIST_X, 132, w, 56, PANEL2);
+    gfx_frame_rect(LIST_X, 132, w, 56, 2, ACCENT);
+    text(s_font_small, LIST_X + 32, 146, w - 48, s_toast, TEXT);
 }
 
 /* ---------------- 一键解锁 ---------------- */
@@ -221,7 +245,7 @@ static void build_plan(void)
 
     s_plan_len = 0;
     s_plan_pos = 0;
-    s_wait_ticks = 0;
+    s_wait_until = 0;
 
     if (n > 0) {
         for (int i = 0; i < n && s_plan_len < 512; i++) {
@@ -261,16 +285,16 @@ static void build_plan(void)
 
 static void auto_tick(void)
 {
+    if (s_wait_until > now_us())
+        return;                       /* 还在等这一个的延迟，界面照常绘制倒计时 */
+
+    s_wait_until = 0;
+
     while (s_plan_pos < s_plan_len) {
         int id = s_plan_id[s_plan_pos];
         char name[128];
         int unlocked = 0;
         int rc;
-
-        if (s_wait_ticks > 0) {
-            s_wait_ticks--;
-            return;
-        }
 
         if (id >= api_count() || api_get(id, name, sizeof(name), &unlocked) != 0) {
             s_plan_pos++;
@@ -287,20 +311,23 @@ static void auto_tick(void)
         rc = api_unlock(id);
         if (rc == 0) {
             s_ok++;
-            toast("已解锁：%s", name);
+            toast("已解锁 ID %03d：%s", id, name);
             log_line("auto unlock ok id=%d", id);
         } else {
             s_fail++;
-            toast("解锁失败：%s（0x%08x）", name, (uint32_t)rc);
+            toast("解锁失败 ID %03d：%s（0x%08x）", id, name, (uint32_t)rc);
             log_line("auto unlock fail id=%d rc=0x%08x", id, (uint32_t)rc);
         }
 
         s_plan_pos++;
 
+        /* 从解锁动作结束的这一刻开始计，间隔就是表里写的秒数 */
         if (s_plan_pos < s_plan_len) {
             int d = s_plan_delay[s_plan_pos - 1];
             if (d < 0) d = 0;
-            s_wait_ticks = d * TICKS_PER_SEC;
+            if (d > 600) d = 600;
+            if (d > 0)
+                s_wait_until = now_us() + (uint64_t)d * US_PER_SEC;
         }
         return;
     }
@@ -315,7 +342,6 @@ void ui_run(void)
 {
     int pad;
     uint32_t prev = 0;
-    int l1_recent = 0;            /* L1 松开后的宽容窗口，避免两键不同帧被当成单独 ○ */
     int total = api_count();
 
     if (scePadInit() != 0)
@@ -341,6 +367,7 @@ void ui_run(void)
     for (;;) {
         OrbisPadData pd;
         uint32_t now = 0, pressed;
+        uint64_t t = now_us();
 
         memset(&pd, 0, sizeof(pd));
         if (scePadReadState(pad, &pd) == 0)
@@ -349,18 +376,15 @@ void ui_run(void)
         pressed = now & ~prev;
         prev = now;
 
-        /* L1 和 ○ 很少在同一帧被采到：L1 松开后保留约 1 秒的窗口，
-           窗口内按 ○ 一律算组合键，不会被误判成"退出" */
+        /* L1 和 ○ 很少在同一帧被采到：L1 松开后保留 1 秒（真实时间）窗口 */
         if (now & ORBIS_PAD_BUTTON_L1)
-            l1_recent = 30;
-        else if (l1_recent > 0)
-            l1_recent--;
+            s_l1_until = t + US_PER_SEC;
 
         /* ○：普通按 = 退出（完成界面 = 回列表）；L1 + ○ = 一键解锁 / 停止 */
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-            int combo = (now & ORBIS_PAD_BUTTON_L1) || l1_recent > 0;
-            log_line("circle pressed combo=%d l1_recent=%d mode=%d", combo, l1_recent, s_mode);
-            l1_recent = 0;
+            int combo = (now & ORBIS_PAD_BUTTON_L1) || t < s_l1_until;
+            log_line("circle pressed combo=%d mode=%d", combo, s_mode);
+            s_l1_until = 0;
             if (combo) {
                 if (s_mode == 0) {
                     s_ok = s_skip = s_fail = 0;
@@ -407,10 +431,10 @@ void ui_run(void)
                     } else {
                         int rc = api_unlock(s_cur);
                         if (rc == 0) {
-                            toast("已解锁：%s", name);
+                            toast("已解锁 ID %03d：%s", s_cur, name);
                             log_line("manual unlock ok id=%d", s_cur);
                         } else {
-                            toast("解锁失败：%s（0x%08x）", name, (uint32_t)rc);
+                            toast("解锁失败 ID %03d：%s（0x%08x）", s_cur, name, (uint32_t)rc);
                             log_line("manual unlock fail id=%d rc=0x%08x", s_cur, (uint32_t)rc);
                         }
                     }
@@ -431,9 +455,6 @@ void ui_run(void)
 
         if (s_mode == 1)
             auto_tick();
-
-        if (s_toast_ticks > 0)
-            s_toast_ticks--;
 
         if (s_cur < s_top)
             s_top = s_cur;
@@ -478,7 +499,7 @@ void ui_run(void)
         draw_toast();
         gfx_present();
 
-        sceKernelUsleep(20000);
+        sceKernelUsleep(12000);
     }
 
     scePadClose(pad);

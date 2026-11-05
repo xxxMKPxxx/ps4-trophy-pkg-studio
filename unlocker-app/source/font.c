@@ -198,3 +198,77 @@ void font_draw(int slot, int x, int y_top, const char *utf8, uint32_t color)
         pen += (int)(g->advance.x >> 6);
     }
 }
+
+void font_draw_fit(int slot, int x, int y_top, int max_px, const char *utf8, uint32_t color)
+{
+    FT_Face f;
+    const char *p = utf8;
+    int pen = x;
+    int base, right;
+    int truncated = 0;
+
+    if (slot < 0 || slot >= FONT_MAX_SLOTS || !utf8 || max_px <= 0)
+        return;
+
+    f = s_face[slot];
+    base = y_top + face_ascender(f);
+
+    right = x + max_px;
+    if (right > GFX_WIDTH - 8)
+        right = GFX_WIDTH - 8;          /* 硬安全边界，绝不允许画到屏幕外 */
+    if (pen >= right)
+        return;
+
+    while (*p) {
+        uint32_t cp = utf8_next(&p);
+        FT_GlyphSlot g;
+        int adv;
+
+        if (cp == '\n')
+            break;
+
+        if (FT_Load_Char(f, cp, FT_LOAD_DEFAULT) != 0)
+            continue;
+
+        g = f->glyph;
+        adv = (int)(g->advance.x >> 6);
+
+        if (pen + adv > right) {
+            truncated = 1;
+            break;
+        }
+
+        if (FT_Render_Glyph(f->glyph, ft_render_mode_normal) != 0)
+            continue;
+
+        g = f->glyph;
+        if (g->bitmap.buffer && g->bitmap.width > 0 && g->bitmap.rows > 0) {
+            gfx_blit_alpha(pen + g->bitmap_left, base - g->bitmap_top,
+                           g->bitmap.buffer, (int)g->bitmap.width, (int)g->bitmap.rows,
+                           (int)g->bitmap.pitch, color);
+        }
+
+        pen += adv;
+    }
+
+    if (truncated) {
+        /* 末尾补三个点，让人知道是显示不下而不是名字本身就这么短 */
+        for (int k = 0; k < 3; k++) {
+            int adv;
+
+            if (FT_Load_Char(f, (uint32_t)'.', FT_LOAD_DEFAULT) != 0)
+                break;
+            adv = (int)(f->glyph->advance.x >> 6);
+            if (pen + adv > right)
+                break;
+            if (FT_Render_Glyph(f->glyph, ft_render_mode_normal) == 0) {
+                FT_GlyphSlot g = f->glyph;
+                if (g->bitmap.buffer && g->bitmap.width > 0 && g->bitmap.rows > 0)
+                    gfx_blit_alpha(pen + g->bitmap_left, base - g->bitmap_top,
+                                   g->bitmap.buffer, (int)g->bitmap.width, (int)g->bitmap.rows,
+                                   (int)g->bitmap.pitch, color);
+            }
+            pen += adv;
+        }
+    }
+}
