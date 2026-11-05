@@ -17,6 +17,12 @@ internal static class TitleIdUtil
     /// <summary>给某个游戏分配唯一 Title ID（9 字符，无 _00）。</summary>
     public static string ForGame(string gameTitleId)
     {
+        // 排查用：exe 同目录放 unlocker.ini，写 titleid=XDPX30000 就强制用这一版，
+        // 等价于回到原工具"所有 Unlocker 共用一个 ID"的行为，方便二分定位。
+        string forced = ReadTitleIdOverride();
+        if (!string.IsNullOrEmpty(forced))
+            return forced;
+
         if (string.IsNullOrEmpty(gameTitleId))
             return Prefix + "30000";
 
@@ -30,6 +36,38 @@ internal static class TitleIdUtil
 
         uint n = h % 100000u;                  // 00000-99999，5 位十进制
         return Prefix + n.ToString("D5");
+    }
+
+    private static string ReadTitleIdOverride()
+    {
+        try
+        {
+            string p = System.IO.Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "unlocker.ini");
+            if (!System.IO.File.Exists(p))
+                return null;
+
+            foreach (string line in System.IO.File.ReadAllLines(p))
+            {
+                string s = line.Trim();
+                if (s.StartsWith("#") || s.Length == 0)
+                    continue;
+                int eq = s.IndexOf('=');
+                if (eq <= 0)
+                    continue;
+                if (s.Substring(0, eq).Trim().ToLowerInvariant() != "titleid")
+                    continue;
+
+                string v = s.Substring(eq + 1).Trim().ToUpperInvariant();
+                if (v.Length == 9)
+                    return v;
+            }
+        }
+        catch
+        {
+            // 读不到就当没配置
+        }
+        return null;
     }
 
     /// <summary>带 _00 后缀的版本，写 nptitle.dat 用。</summary>
