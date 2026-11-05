@@ -2,9 +2,9 @@
  * 界面：奖杯列表 + 手动解锁 + 一键解锁（带进度/倒计时）
  *
  * 操作：
- *   ↑/↓        移动光标（L1/R1 翻页）
+ *   ↑/↓        移动光标（L2/R2 翻页）
  *   X          解锁光标处奖杯
- *   OPTIONS    一键解锁（按顺序表；运行中再按 = 停止）
+ *   L1 + ○     一键解锁（按顺序表；运行中再按 = 停止）
  *   △          刷新解锁状态
  *   ○          退出（完成界面里 ○ 退回列表）
  */
@@ -35,7 +35,7 @@
 #define LIST_TOP      176
 #define LIST_ROWS     14
 #define LIST_X        96
-#define LIST_W        (GFX_W - 96 * 2)
+#define LIST_W        (GFX_WIDTH - 96 * 2)
 
 static int s_font_title = -1;
 static int s_font_row = -1;
@@ -102,8 +102,8 @@ static void draw_header(int total, int unlocked)
 {
     char buf[128];
 
-    gfx_fill(0, 0, GFX_W, 120, PANEL);
-    gfx_fill(0, 118, GFX_W, 2, ACCENT);
+    gfx_fill(0, 0, GFX_WIDTH, 120, PANEL);
+    gfx_fill(0, 118, GFX_WIDTH, 2, ACCENT);
 
     font_draw(s_font_title, LIST_X, 30, "奖杯解锁器", TEXT);
 
@@ -111,7 +111,7 @@ static void draw_header(int total, int unlocked)
     font_draw(s_font_small, LIST_X + 300, 46, buf, TEXT_DIM);
 
     snprintf(buf, sizeof(buf), "已解锁 %d / %d", unlocked, total);
-    font_draw(s_font_small, GFX_W - LIST_X - font_text_width(s_font_small, buf), 46, buf, GREEN);
+    font_draw(s_font_small, GFX_WIDTH - LIST_X - font_text_width(s_font_small, buf), 46, buf, GREEN);
 }
 
 static void draw_row(int y, int id, const char *name, int is_unlocked, int selected)
@@ -135,14 +135,14 @@ static void draw_row(int y, int id, const char *name, int is_unlocked, int selec
 
 static void draw_footer(void)
 {
-    gfx_fill(0, GFX_H - 96, GFX_W, 96, PANEL);
-    font_draw(s_font_small, LIST_X, GFX_H - 70,
-              "↑↓ 选择    X 解锁    OPTIONS 一键解锁    △ 刷新    ○ 退出", TEXT_DIM);
+    gfx_fill(0, GFX_HEIGHT - 96, GFX_WIDTH, 96, PANEL);
+    font_draw(s_font_small, LIST_X, GFX_HEIGHT - 70,
+              "↑↓ 选择   L2/R2 翻页   X 解锁   L1+○ 一键解锁   △ 刷新   ○ 退出", TEXT_DIM);
 }
 
 static void draw_auto_panel(void)
 {
-    int y = GFX_H - 300;
+    int y = GFX_HEIGHT - 300;
     int bar_y = y + 150;
     int done = s_plan_pos > s_plan_len ? s_plan_len : s_plan_pos;
     char buf[320];
@@ -150,8 +150,8 @@ static void draw_auto_panel(void)
     int name_id = (s_plan_pos < s_plan_len) ? s_plan_id[s_plan_pos] : -1;
     int u = 0;
 
-    gfx_fill(0, y, GFX_W, 300, PANEL);
-    gfx_fill(0, y, GFX_W, 2, ACCENT);
+    gfx_fill(0, y, GFX_WIDTH, 300, PANEL);
+    gfx_fill(0, y, GFX_WIDTH, 2, ACCENT);
 
     if (name_id >= 0 && api_get(name_id, name, sizeof(name), &u) == 0)
         snprintf(buf, sizeof(buf), "正在解锁  第 %d / %d 个：%s", s_plan_pos + 1, s_plan_len, name);
@@ -175,17 +175,17 @@ static void draw_auto_panel(void)
     snprintf(buf, sizeof(buf), "%d%%", s_plan_len > 0 ? done * 100 / s_plan_len : 0);
     font_draw(s_font_small, LIST_X + LIST_W - 80, bar_y - 4, buf, TEXT_DIM);
 
-    snprintf(buf, sizeof(buf), "成功 %d   跳过 %d   失败 %d      （OPTIONS 停止）", s_ok, s_skip, s_fail);
+    snprintf(buf, sizeof(buf), "成功 %d   跳过 %d   失败 %d      （L1+○ 停止）", s_ok, s_skip, s_fail);
     font_draw(s_font_small, LIST_X, y + 200, buf, TEXT_DIM);
 }
 
 static void draw_done_panel(void)
 {
-    int y = GFX_H - 300;
+    int y = GFX_HEIGHT - 300;
     char buf[256];
 
-    gfx_fill(0, y, GFX_W, 300, PANEL);
-    gfx_fill(0, y, GFX_W, 2, GREEN);
+    gfx_fill(0, y, GFX_WIDTH, 300, PANEL);
+    gfx_fill(0, y, GFX_WIDTH, 2, GREEN);
 
     font_draw(s_font_row, LIST_X, y + 40, "完成", GREEN);
 
@@ -203,7 +203,7 @@ static void draw_toast(void)
         return;
 
     w = font_text_width(s_font_small, s_toast) + 64;
-    x = (GFX_W - w) / 2;
+    x = (GFX_WIDTH - w) / 2;
     y = 140;
 
     gfx_fill(x, y, w, 56, PANEL2);
@@ -348,8 +348,21 @@ void ui_run(void)
         pressed = now & ~prev;
         prev = now;
 
+        /* ○：普通按 = 退出（完成界面 = 回列表）；L1 + ○ = 一键解锁 / 停止 */
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-            if (s_mode == 2) {
+            if (now & ORBIS_PAD_BUTTON_L1) {
+                if (s_mode == 0) {
+                    s_ok = s_skip = s_fail = 0;
+                    build_plan();
+                    s_mode = 1;
+                    log_line("auto start plan=%d", s_plan_len);
+                } else if (s_mode == 1) {
+                    s_mode = 2;
+                    log_line("auto stopped pos=%d ok=%d", s_plan_pos, s_ok);
+                } else {
+                    s_mode = 0;
+                }
+            } else if (s_mode == 2) {
                 s_mode = 0;
             } else {
                 log_line("user exit");
@@ -364,9 +377,10 @@ void ui_run(void)
             if (pressed & ORBIS_PAD_BUTTON_DOWN) {
                 if (s_cur < total - 1) s_cur++;
             }
-            if (pressed & ORBIS_PAD_BUTTON_L1)
+            /* 翻页用 L2/R2 —— L1 是一键解锁的组合键，不能兼任翻页 */
+            if (pressed & ORBIS_PAD_BUTTON_L2)
                 s_cur = clamp(s_cur - LIST_ROWS, 0, total - 1);
-            if (pressed & ORBIS_PAD_BUTTON_R1)
+            if (pressed & ORBIS_PAD_BUTTON_R2)
                 s_cur = clamp(s_cur + LIST_ROWS, 0, total - 1);
 
             if (pressed & ORBIS_PAD_BUTTON_CROSS) {
@@ -394,17 +408,8 @@ void ui_run(void)
                 toast("已刷新");
             }
 
-            if (pressed & ORBIS_PAD_BUTTON_OPTIONS) {
-                s_ok = s_skip = s_fail = 0;
-                build_plan();
-                s_mode = 1;
-                log_line("auto start plan=%d", s_plan_len);
-            }
         } else if (s_mode == 1) {
-            if (pressed & ORBIS_PAD_BUTTON_OPTIONS) {
-                s_mode = 2;
-                log_line("auto stopped pos=%d ok=%d", s_plan_pos, s_ok);
-            }
+            /* 停止走上面的 L1 + ○ */
         } else {
             if (pressed & ORBIS_PAD_BUTTON_CROSS)
                 s_mode = 0;

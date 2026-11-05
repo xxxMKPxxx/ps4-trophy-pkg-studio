@@ -23,8 +23,8 @@ int gfx_ready(void)
 
 int gfx_init(void)
 {
-    const size_t stride = (size_t)GFX_W * 4;
-    const size_t one = stride * GFX_H;
+    const size_t stride = (size_t)GFX_WIDTH * 4;
+    const size_t one = stride * GFX_HEIGHT;
     const size_t align = 0x200000;
 
     s_video = sceVideoOutOpen(ORBIS_VIDEO_USER_MAIN, ORBIS_VIDEO_OUT_BUS_MAIN, 0, NULL);
@@ -46,7 +46,7 @@ int gfx_init(void)
     s_fb[0] = (uint32_t *)s_videoMem;
     s_fb[1] = (uint32_t *)((uint8_t *)s_videoMem + one);
 
-    sceVideoOutSetBufferAttribute(&s_attr, 0x80000000, 1, 0, GFX_W, GFX_H, GFX_W);
+    sceVideoOutSetBufferAttribute(&s_attr, 0x80000000, 1, 0, GFX_WIDTH, GFX_HEIGHT, GFX_WIDTH);
 
     {
         void *buffers[2];
@@ -70,7 +70,7 @@ void gfx_clear(uint32_t color)
         return;
 
     uint32_t *p = s_fb[s_cur];
-    size_t n = (size_t)GFX_W * GFX_H;
+    size_t n = (size_t)GFX_WIDTH * GFX_HEIGHT;
     for (size_t i = 0; i < n; i++)
         p[i] = color;
 }
@@ -82,14 +82,14 @@ void gfx_fill(int x, int y, int w, int h, uint32_t color)
 
     int x0 = x < 0 ? 0 : x;
     int y0 = y < 0 ? 0 : y;
-    int x1 = x + w > GFX_W ? GFX_W : x + w;
-    int y1 = y + h > GFX_H ? GFX_H : y + h;
+    int x1 = x + w > GFX_WIDTH ? GFX_WIDTH : x + w;
+    int y1 = y + h > GFX_HEIGHT ? GFX_HEIGHT : y + h;
 
     if (x1 <= x0 || y1 <= y0)
         return;
 
     for (int yy = y0; yy < y1; yy++) {
-        uint32_t *row = s_fb[s_cur] + (size_t)yy * GFX_W;
+        uint32_t *row = s_fb[s_cur] + (size_t)yy * GFX_WIDTH;
         for (int xx = x0; xx < x1; xx++)
             row[xx] = color;
     }
@@ -115,15 +115,15 @@ void gfx_blit_alpha(int x, int y, const uint8_t *src, int w, int h, int pitch, u
 
     for (int yy = 0; yy < h; yy++) {
         int dy = y + yy;
-        if (dy < 0 || dy >= GFX_H)
+        if (dy < 0 || dy >= GFX_HEIGHT)
             continue;
 
         const uint8_t *s = src + (size_t)yy * pitch;
-        uint32_t *row = s_fb[s_cur] + (size_t)dy * GFX_W;
+        uint32_t *row = s_fb[s_cur] + (size_t)dy * GFX_WIDTH;
 
         for (int xx = 0; xx < w; xx++) {
             int dx = x + xx;
-            if (dx < 0 || dx >= GFX_W)
+            if (dx < 0 || dx >= GFX_WIDTH)
                 continue;
 
             int a = s[xx];

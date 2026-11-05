@@ -4,13 +4,13 @@
  * 1920x1080 / 32bit，双缓冲。像素格式和 OpenOrbis 的 samples/_common/graphics.cpp 一致：
  *   0x80000000 | (r << 16) | (g << 8) | b
  */
-#ifndef GFX_H
-#define GFX_H
+#ifndef GFX_H_INCLUDED
+#define GFX_H_INCLUDED
 
 #include <stdint.h>
 
-#define GFX_W 1920
-#define GFX_H 1080
+#define GFX_WIDTH  1920
+#define GFX_HEIGHT 1080
 
 #define GFX_RGB(r, g, b) \
     (0x80000000u | ((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
