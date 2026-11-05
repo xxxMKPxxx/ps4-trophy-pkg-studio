@@ -19,7 +19,7 @@
 attr_public const char *g_pluginName    = "trophy_unlocker";
 attr_public const char *g_pluginDesc    = "In-game trophy unlocker (real, via NpTrophy)";
 attr_public const char *g_pluginAuth    = "";
-attr_public uint32_t    g_pluginVersion = 0x00000103;   /* 1.03：就绪提示 + 全解确认 */
+attr_public uint32_t    g_pluginVersion = 0x00000104;   /* 1.04：三角全解支持顺序表 + 延迟 + 断点续解 */
 
 int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 {
