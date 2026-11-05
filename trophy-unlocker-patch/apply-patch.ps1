@@ -588,6 +588,79 @@ if ($needSfoTitlePatch) {
     Write-Ok '标题编码补丁已存在，跳过'
 }
 
+# --- 3.59 CONTENT_ID 自检 ---
+# PS4 装不上 pkg 最常见的原因之一：CONTENT_ID 的中间段和 TITLE_ID 不一致。
+# 原代码用 tempitem.Value.Replace(sfo.TitleID, ...)，而 sfo.TitleID 在循环里
+# 可能已经被改成新值（取决于库是否缓存），Replace 就成了空操作 —— 结果
+# TITLE_ID=XDPX12345 而 CONTENT_ID 还是 CUSA04893，安装直接被拒。
+# 这里不猜，打包前把两个值读出来核对，不一致就按 TITLE_ID 重建 CONTENT_ID。
+$needCidBlock = ($src -notmatch '补丁：CONTENT_ID 自检')
+$needPkgBlock = ($src -notmatch 'pkg 未生成')
+$needCidCheck = ($needCidBlock -or $needPkgBlock)
+if ($needCidCheck) {
+    $cidBlock = @'
+    // 补丁：CONTENT_ID 自检 —— 中间段必须等于 TITLE_ID，否则 PS4 会拒绝安装
+    try
+    {
+        string sfoPath = AppCommonPath() + @"CONTENTS\sce_sys\param.sfo";
+        byte[] sfoBytes = File.ReadAllBytes(sfoPath);
+        string tidNow = SfoUtil.GetString(sfoBytes, "TITLE_ID");
+        string cidNow = SfoUtil.GetString(sfoBytes, "CONTENT_ID");
+        LogLine("param.sfo 自检: TITLE_ID=" + tidNow + "  CONTENT_ID=" + cidNow);
+
+        if (!string.IsNullOrEmpty(tidNow) && !string.IsNullOrEmpty(cidNow))
+        {
+            string[] seg = cidNow.Split('-');
+            if (seg.Length >= 3 && seg[1].Replace("_00", "") != tidNow)
+            {
+                string fixedCid = seg[0] + "-" + tidNow + "_00-" + seg[2];
+                SfoUtil.SetString(sfoPath, "CONTENT_ID", fixedCid);
+                sfo = new Param_SFO.PARAM_SFO(sfoPath);
+                LogLine("CONTENT_ID 与 TITLE_ID 不一致，已重建为 " + fixedCid);
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        LogLine("param.sfo 自检失败: " + ex.Message);
+    }
+
+'@
+    $anchorGp4 = '    UpdateProgress("Creating GP4 Project");'
+    if ($needCidBlock) {
+    $before = $src
+    $src = $src.Replace($anchorGp4, $cidBlock + $anchorGp4)
+    if ($src -eq $before) { Write-Warn2 '没找到 "Creating GP4 Project"，CONTENT_ID 自检未插入' }
+    }
+
+    $pkgBlock = @'
+    // 补丁：确认 orbis-pub-cmd 真的产出了 pkg（失败时这里能看出来）
+    try
+    {
+        string builtPkg = saveFileDialog1.SelectedPath + @"\" + sfo.ContentID + "-A" + sfo.APP_VER.Replace(".", "") + "-V" + version.Replace(".", "") + ".pkg";
+        if (File.Exists(builtPkg))
+            LogLine("pkg 已生成: " + builtPkg + "  (" + new FileInfo(builtPkg).Length + " 字节)");
+        else
+            LogLine("pkg 未生成，orbis-pub-cmd 可能失败: " + builtPkg);
+    }
+    catch (Exception ex)
+    {
+        LogLine("检查 pkg 失败: " + ex.Message);
+    }
+
+'@
+    $anchorRename = '    UpdateProgress("Renaming PKG");'
+    if ($needPkgBlock) {
+    $before = $src
+    $src = $src.Replace($anchorRename, $anchorRename + "`r`n" + $pkgBlock)
+    if ($src -eq $before) { Write-Warn2 '没找到 "Renaming PKG"，pkg 存在性检查未插入' }
+    }
+
+    Write-Ok '已加入 CONTENT_ID 自检与 pkg 产出检查'
+} else {
+    Write-Ok 'CONTENT_ID 自检已存在，跳过'
+}
+
 # --- 3.6 让"跳过"可见 ---
 # Form1.cs 里有 5 处空的 catch (Exception ex) { }，只有 appmeta 那个循环里的
 # 能访问 splitt。所以只替换**第一处**，而且不引用 splitt（否则 CS0103）。
@@ -691,7 +764,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch -or $needUiPatch -or $needSfoTitlePatch) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch -or $needUiPatch -or $needSfoTitlePatch -or $needCidCheck) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak

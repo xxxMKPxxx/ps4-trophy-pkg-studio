@@ -37,6 +37,11 @@ namespace TrophyUnlocker
             }
             sfo.SaveSFO(sfo, AppCommonPath() + @"CONTENTS\sce_sys\param.sfo");
 
+            sfo = new Param_SFO.PARAM_SFO(AppCommonPath() + @"CONTENTS\sce_sys\param.sfo");
+            UpdateProgress("Creating GP4 Project");
+            string version = "01.00";
+            UpdateProgress("Renaming PKG");
+
             if (File.Exists(saveFileDialog1.SelectedPath + @"\" + RemoveSpecialCharacters(sfo.Title) + ".pkg"))
             {
                 File.Delete(saveFileDialog1.SelectedPath + @"\" + RemoveSpecialCharacters(sfo.Title) + ".pkg");
@@ -178,6 +183,8 @@ $checks = @(
   @{ N='TitleId 唯一化仍在';         Pass = (([regex]::Matches($p, 'TitleIdUtil\.ForGameNpTitle')).Count -eq 1) },
   @{ N='标题用 UTF-8 解出';          Pass = ($p -match 'string realTitle = SfoUtil\.GetString') },
   @{ N='标题按 UTF-8 重写';          Pass = ($p -match 'SfoUtil\.SetString\(') },
+  @{ N='CONTENT_ID 自检已插入';      Pass = ($p -match '补丁：CONTENT_ID 自检' -and $p -match 'seg\[1\]\.Replace') },
+  @{ N='pkg 产出检查已插入';         Pass = ($p -match 'pkg 未生成，orbis-pub-cmd 可能失败') },
   @{ N='文件名用 realTitle';         Pass = ($p -match 'RemoveSpecialCharacters\(realTitle\)' -and $p -notmatch 'RemoveSpecialCharacters\(sfo\.Title\)') },
   @{ N='newpkgid 硬编码已移除';      Pass = ($p -notmatch '"XDPX30000_00"') },
   @{ N='大括号仍平衡';               Pass = ((([regex]::Matches($p,'\{')).Count) -eq (([regex]::Matches($p,'\}')).Count)) }
