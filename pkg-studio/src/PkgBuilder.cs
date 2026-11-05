@@ -136,15 +136,16 @@ namespace PkgStudio
                     "img_create --oformat pkg \"" + gp4 + "\" \"" + outDir + "\"", tools);
                 Log.Write("img_create 输出: " + (string.IsNullOrEmpty(output) ? "(空)" : Trim(output)));
 
+                if (output.IndexOf("[Error]", StringComparison.OrdinalIgnoreCase) >= 0)
+                    throw new Exception("img_create 报错了，产物不可用。\r\n\r\norbis-pub-cmd 输出：\r\n" + Trim(output));
+
                 string made = null;
                 foreach (string f in Directory.GetFiles(outDir, "*.pkg"))
                 {
                     if (!before.Contains(f)) { made = f; break; }
                 }
                 if (made == null)
-                    made = NewestPkg(outDir);
-                if (made == null)
-                    throw new Exception("orbis-pub-cmd 没有产出 pkg。输出：\n" + Trim(output));
+                    throw new Exception("img_create 没有产出 pkg（输出目录里没有新文件）。\r\n\r\norbis-pub-cmd 输出：\r\n" + Trim(output));
 
                 // 6. 改成易读的 ASCII 名字
                 string nice = Path.Combine(outDir, SafeName(it.Title) + "_" + newId + ".pkg");

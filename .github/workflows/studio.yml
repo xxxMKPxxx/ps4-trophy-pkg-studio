@@ -66,10 +66,13 @@ jobs:
           # 打 pkg 时会自动替换模板自带的那个 eboot
           git fetch --depth 1 origin app-builds 2>$null
           if ($LASTEXITCODE -eq 0) {
-            git checkout FETCH_HEAD -- eboot.bin 2>$null
-            if (Test-Path '.\eboot.bin') {
-              Copy-Item '.\eboot.bin' "$out\template\eboot.bin" -Force
-              Write-Host '已放入自定义 eboot.bin（解锁器 app）'
+            # 要 ELF（不是 SELF）：img_create 会自己转成 SELF，给 SELF 会直接报错
+            git checkout FETCH_HEAD -- eboot.elf 2>$null
+            if (Test-Path '.\eboot.elf') {
+              Copy-Item '.\eboot.elf' "$out\template\eboot.bin" -Force
+              Write-Host '已放入解锁器 eboot（ELF，打包时由 img_create 转 SELF）'
+            } else {
+              Write-Host 'app-builds 里没有 eboot.elf，跳过'
             }
           } else {
             Write-Host 'app-builds 还没产物，先用手工/模板 eboot'
