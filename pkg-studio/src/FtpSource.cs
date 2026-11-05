@@ -28,6 +28,17 @@ namespace PkgStudio
             "mnt/usb1/user/appmeta/"
         };
 
+        // 已安装游戏的“真索引”：每装一个游戏这里就有一个 <TITLEID> 目录。
+        // appmeta 只是汇总目录，有些游戏在那里没有条目，所以用它来补全列表。
+        private static readonly string[] AppDirs = new string[]
+        {
+            "user/app/",
+            "mnt/ext0/user/app/",
+            "mnt/ext1/user/app/",
+            "mnt/usb0/user/app/",
+            "mnt/usb1/user/app/"
+        };
+
         private const int Parallelism = 8;
         private const int TimeoutMs = 12000;
 
@@ -110,6 +121,101 @@ namespace PkgStudio
                     });
             }
 
+            // ---------- 第二阶段：用 /user/app/ 的索引补全 appmeta 漏掉的游戏 ----------
+            // 装了游戏就一定会在 /user/app/<TITLEID>/ 下有个目录（外置盘在 /mnt/ext0/user/app/），
+            // 而 appmeta 只是汇总目录，个别游戏在那里没有条目 —— 这就是"列表不全"的来源。
+            int before = list.Count;
+            List<string> appTids = new List<string>();
+            HashSet<string> appSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string d in AppDirs)
+            {
+                string url = root + d;
+                List<string> names;
+                try
+                {
+                    names = ListDirs(url);
+                }
+                catch (Exception ex)
+                {
+                    log("目录不可用 " + d + " : " + ex.Message);
+                    continue;
+                }
+
+                int added = 0;
+                foreach (string n in names)
+                {
+                    if (!LooksLikeTitleId(n))
+                        continue;
+                    if (appSeen.Add(n))
+                    {
+                        appTids.Add(n);
+                        added++;
+                    }
+                }
+
+                log("索引 " + d + " 条目 " + names.Count + "，Title ID " + added);
+            }
+
+            List<string> missing = new List<string>();
+            lock (gate)
+            {
+                foreach (string t in appTids)
+                    if (!seen.Contains(t))
+                        missing.Add(t);
+            }
+
+            log("user/app 索引 " + appTids.Count + " 个，其中 " + missing.Count + " 个不在 appmeta 列表里，逐个反查元数据…");
+
+            Parallel.ForEach(missing,
+                new ParallelOptions { MaxDegreeOfParallelism = Parallelism },
+                tid =>
+                {
+                    try
+                    {
+                        string meta = FindMeta(root, tid);
+                        if (meta == null)
+                        {
+                            Log.Write("补不上 " + tid + "：appmeta / 各盘 appmeta / app 下的 sce_sys 都没有 param.sfo");
+                            return;
+                        }
+
+                        byte[] param = Download(meta + "param.sfo");
+                        if (param == null || param.Length == 0)
+                            return;
+
+                        GameItem it = new GameItem();
+                        it.Source = "FTP";
+                        it.Origin = meta;            // 元数据目录，打包时从这里取 nptitle/npbind
+                        it.RootUrl = root;
+                        it.Param = param;
+                        it.Title = Sfo.Get(param, "TITLE");
+                        it.TitleId = Sfo.Get(param, "TITLE_ID");
+                        it.ContentId = Sfo.Get(param, "CONTENT_ID");
+                        it.Category = Sfo.Get(param, "CATEGORY");
+                        it.AppVer = Sfo.Get(param, "APP_VER");
+                        it.Kind = GameItem.KindOf(it.Category);
+
+                        if (it.Kind == GameKind.Update)
+                            return;
+
+                        lock (gate)
+                        {
+                            if (seen.Add(it.TitleId))
+                            {
+                                list.Add(it);
+                                Log.Write("索引补全: " + it.Title + " / " + it.TitleId + "  元数据在 " + meta);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write("补全失败 " + tid + " : " + ex.Message);
+                    }
+                });
+
+            log("索引补全 "+ (list.Count - before) + " 个");
+
             watch.Stop();
             Log.Write("FTP 扫描完成: " + list.Count + " 个，用时 " + watch.ElapsedMilliseconds + " ms");
             log("扫描完成：" + list.Count + " 个，用时 " + (watch.ElapsedMilliseconds / 1000.0).ToString("0.0") + " 秒");
@@ -184,6 +290,53 @@ namespace PkgStudio
                     continue;
 
                 return Encoding.ASCII.GetString(data, i, 9);
+            }
+            return null;
+        }
+
+        /// <summary>目录名像不像 Title ID：CUSA04893 / PPSA01234，9 位，前 4 字母后 5 数字。系统应用 NPXS 排除。</summary>
+        private static bool LooksLikeTitleId(string n)
+        {
+            if (n == null || n.Length != 9)
+                return false;
+            if (n.StartsWith("NP", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            for (int i = 0; i < 4; i++)
+            {
+                char c = n[i];
+                if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')))
+                    return false;
+            }
+            for (int i = 4; i < 9; i++)
+            {
+                if (n[i] < '0' || n[i] > '9')
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>按可能的位置找一个含 param.sfo 的目录，返回该目录的 URL（带结尾斜杠）。</summary>
+        private static string FindMeta(string root, string tid)
+        {
+            string[] bases = new string[]
+            {
+                root + "user/appmeta/" + tid + "/",
+                root + "system_data/priv/appmeta/" + tid + "/",
+                root + "mnt/ext0/user/appmeta/" + tid + "/",
+                root + "mnt/ext1/user/appmeta/" + tid + "/",
+                root + "user/app/" + tid + "/sce_sys/",
+                root + "mnt/ext0/user/app/" + tid + "/sce_sys/",
+                root + "mnt/ext1/user/app/" + tid + "/sce_sys/",
+                root + "mnt/usb0/user/app/" + tid + "/sce_sys/",
+                root + "mnt/usb1/user/app/" + tid + "/sce_sys/"
+            };
+
+            foreach (string b in bases)
+            {
+                byte[] p = Download(b + "param.sfo");
+                if (p != null && p.Length > 0)
+                    return b;
             }
             return null;
         }
