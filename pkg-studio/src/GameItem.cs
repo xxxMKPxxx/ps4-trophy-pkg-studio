@@ -15,6 +15,7 @@ namespace PkgStudio
         public string Source;        // "PKG" / "FTP"
         public string Origin;        // 文件路径或远端目录
         public string RootUrl;       // FTP 根，如 ftp://192.168.1.10:2121/
+        public string CacheDir;      // PKG 导入时解出来的目录（懒加载其余文件用）
         public string Title;
         public string TitleId;
         public string ContentId;

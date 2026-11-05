@@ -288,26 +288,54 @@ namespace PkgStudio
             string singleError = null;
             string notGameTitle = null;
 
-            SetBusy(true, "导入中…");
+            SetBusy(true, "读取 pkg…");
 
             foreach (string p in pkgs)
             {
-                Status("导入 " + Path.GetFileName(p) + " …");
+                // 文件名里就有 Content ID / Title ID，先秒出一行，别让人干等
+                GameItem quick = new GameItem();
+                quick.Source = "PKG";
+                quick.Origin = p;
+                quick.TitleId = PkgName.TitleId(p) ?? "";
+                quick.ContentId = PkgName.ContentId(p) ?? "";
+                quick.AppVer = PkgName.AppVer(p) ?? "";
+                quick.Title = PkgName.Label(p);
+                quick.Kind = GameKind.Game;
+
+                int row = AddRow(quick);
+                grid.Rows[row].Cells[4].Value = "读取中…";
+
+                Status("读取 " + Path.GetFileName(p) + " …");
+
                 try
                 {
                     string path = p;
-                    GameItem it = await Task.Run(() => PkgReader.FromPkg(path, TemplateDir, workRoot));
+                    GameItem full = await Task.Run(() => PkgReader.FromPkg(path, TemplateDir, workRoot));
 
-                    // 更新 / DLC 不进列表，只计数
-                    if (!it.Usable)
+                    if (!full.Usable)
                     {
                         notGame++;
-                        notGameTitle = it.Title;
-                        Log.Write("非游戏跳过: " + it.Title + " / " + it.TitleId + " / CATEGORY=" + it.Category);
+                        notGameTitle = full.Title;
+                        Log.Write("非游戏跳过: " + full.Title + " / " + full.TitleId + " / CATEGORY=" + full.Category);
+                        items.Remove(quick);
+                        grid.Rows.RemoveAt(row);
                         continue;
                     }
 
-                    AddRow(it);
+                    // 用解出来的真实数据替换临时行
+                    quick.Title = full.Title;
+                    quick.TitleId = full.TitleId;
+                    quick.ContentId = full.ContentId;
+                    quick.Category = full.Category;
+                    quick.AppVer = full.AppVer;
+                    quick.Kind = full.Kind;
+                    quick.Param = full.Param;
+                    quick.Nptitle = full.Nptitle;
+                    quick.Npbind = full.Npbind;
+                    quick.Trophy = full.Trophy;
+                    quick.CacheDir = full.CacheDir;
+
+                    UpdateRow(row, quick);
                     ok++;
                 }
                 catch (Exception ex)
@@ -315,6 +343,8 @@ namespace PkgStudio
                     bad++;
                     Log.Error("导入 " + Path.GetFileName(p), ex);
                     singleError = Path.GetFileName(p) + "\r\n\r\n" + ex.Message;
+                    quick.Kind = GameKind.Unknown;
+                    grid.Rows[row].Cells[4].Value = "读取失败（详见 pkgstudio.log）";
                     Status("导入失败 " + Path.GetFileName(p) + " : " + FirstLine(ex.Message));
                 }
             }
@@ -377,7 +407,7 @@ namespace PkgStudio
             MessageBox.Show(sb.ToString(), title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
-        private void AddRow(GameItem it)
+        private int AddRow(GameItem it)
         {
             items.Add(it);
 
@@ -392,6 +422,23 @@ namespace PkgStudio
             row.Tag = it;
             if (!it.Usable)
                 row.DefaultCellStyle.ForeColor = Color.Firebrick;
+
+            return i;
+        }
+
+        private void UpdateRow(int index, GameItem it)
+        {
+            if (index < 0 || index >= grid.Rows.Count)
+                return;
+
+            DataGridViewRow row = grid.Rows[index];
+            row.Cells[0].Value = it.Source;
+            row.Cells[1].Value = string.IsNullOrEmpty(it.Title) ? "(无标题)" : it.Title;
+            row.Cells[2].Value = it.TitleId;
+            row.Cells[3].Value = it.KindText;
+            row.Cells[4].Value = it.StatusText;
+            row.Tag = it;
+            row.DefaultCellStyle.ForeColor = it.Usable ? Color.Black : Color.Firebrick;
         }
 
         // ---------------- FTP ----------------
@@ -490,6 +537,8 @@ namespace PkgStudio
 
                     if (cur.Source == "FTP")
                         await Task.Run(() => FtpSource.EnsureFiles(cur, delegate (string s) { }));
+                    else if (!cur.FilesLoaded)
+                        await Task.Run(() => PkgReader.EnsureFiles(cur, tpl, wr, delegate (string s) { }));
 
                     string pkg = await Task.Run(() => PkgBuilder.Build(cur, tpl, od, wr,
                         delegate (string s) { }));
