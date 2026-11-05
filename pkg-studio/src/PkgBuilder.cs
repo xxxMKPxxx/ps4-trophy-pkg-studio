@@ -125,7 +125,7 @@ namespace PkgStudio
                 if (hasOrder)
                 {
                     File.Copy(orderLocal, Path.Combine(target, "trophy_order.csv"), true);
-                    log("已加入解锁顺序表");
+                    log("已加入解锁顺序表（延迟单位：秒）");
                     Log.Write("顺序表: " + orderLocal);
                 }
 
