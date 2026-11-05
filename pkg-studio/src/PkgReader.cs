@@ -22,6 +22,9 @@ namespace PkgStudio
 
             Log.Write("导入 pkg: " + pkgPath + "  (" + (fi.Length / 1024 / 1024) + " MB)");
 
+            // orbis 打不开 UNC 路径和中文路径，必要时先复制成本地 ASCII 路径
+            string srcPkg = PrepareSource(pkgPath, workRoot);
+
             Stopwatch watch = Stopwatch.StartNew();
             string sfoPath = FindFile(work, "param.sfo");
 
@@ -41,7 +44,7 @@ namespace PkgStudio
                     ":sce_sys/param.sfo",
                     ":Sc0/sce_sys/param.sfo"
                 };
-                sfoPath = TrySelectors(exe, tools, pkgPath, work, fileSels, "file", watch);
+                sfoPath = TrySelectors(exe, tools, srcPkg, work, fileSels, "file", watch);
 
                 // 2) 取整个 sce_sys 目录
                 if (sfoPath == null)
@@ -52,7 +55,7 @@ namespace PkgStudio
                         ":sce_sys",
                         ":Sc0/sce_sys"
                     };
-                    sfoPath = TrySelectors(exe, tools, pkgPath, work, dirSels, "dir", watch);
+                    sfoPath = TrySelectors(exe, tools, srcPkg, work, dirSels, "dir", watch);
                 }
 
                 // 3) 最后退回整包（慢，尤其包在网络盘上）
@@ -64,7 +67,7 @@ namespace PkgStudio
 
                     string sub = Path.Combine(work, "full");
                     string outText = Orbis.Run(exe,
-                        "img_extract --passcode " + Zeros + " \"" + pkgPath + "\" \"" + sub + "\"", tools);
+                        "img_extract --passcode " + Zeros + " \"" + srcPkg + "\" \"" + sub + "\"", tools);
 
                     Log.Write("整包解压用时 " + watch.ElapsedMilliseconds + " ms，落地文件 " + CountFiles(sub));
                     sfoPath = FindFile(work, "param.sfo");
@@ -122,6 +125,7 @@ namespace PkgStudio
 
             string exe = Orbis.EnsureTool(templateDir, workRoot);
             string tools = Path.GetDirectoryName(exe);
+            string srcPkg = PrepareSource(it.Origin, workRoot);
 
             if (!Directory.Exists(work))
                 Directory.CreateDirectory(work);
@@ -136,18 +140,18 @@ namespace PkgStudio
                 Stopwatch w = Stopwatch.StartNew();
 
                 string[] dirSels = new string[] { ":Image0/sce_sys", ":sce_sys", ":Sc0/sce_sys" };
-                string got = TrySelectors(exe, tools, it.Origin, work, dirSels, "need", w);
+                string got = TrySelectors(exe, tools, srcPkg, work, dirSels, "need", w);
 
                 if (got == null)
                 {
-                    long need = new FileInfo(it.Origin).Length;
+                    long need = new FileInfo(srcPkg).Length;
                     CheckSpace(work, need + 64L * 1024 * 1024);
 
-                    Log.Write("选择性解包不可用，整包解压: " + it.Origin);
+                    Log.Write("选择性解包不可用，整包解压: " + srcPkg);
                     string sub = Path.Combine(work, "full");
                     w.Restart();
                     string outText = Orbis.Run(exe,
-                        "img_extract --passcode " + Zeros + " \"" + it.Origin + "\" \"" + sub + "\"", tools);
+                        "img_extract --passcode " + Zeros + " \"" + srcPkg + "\" \"" + sub + "\"", tools);
                     Log.Write("整包解压用时 " + w.ElapsedMilliseconds + " ms，落地 " + CountFiles(sub));
                     lastExtractOutput = outText;
                 }
@@ -238,8 +242,56 @@ namespace PkgStudio
             return s.Length > 1200 ? s.Substring(0, 1200) : s;
         }
 
-        /// <summary>整包解压前先看空间，否则 orbis 只会默默失败。</summary>
-        private static void CheckSpace(string dir, long needBytes)
+        /// <summary>
+        /// orbis-pub-cmd 是老的 Sony 工具，对 UNC 路径（\\nas\...）和含中文的路径
+        /// 基本打不开文件。遇到这种就把包先复制到本地纯 ASCII 路径再用。
+        /// </summary>
+        private static string PrepareSource(string pkgPath, string workRoot)
+        {
+            if (!pkgPath.StartsWith("\\\\") && !HasNonAscii(pkgPath))
+                return pkgPath;
+
+            string dir = Path.Combine(workRoot, "src");
+            Directory.CreateDirectory(dir);
+
+            string dest = Path.Combine(dir, Fnv(pkgPath).ToString("x8") + ".pkg");
+            FileInfo src = new FileInfo(pkgPath);
+
+            if (File.Exists(dest) && new FileInfo(dest).Length == src.Length)
+                return dest;
+
+            Log.Write("源路径是网络路径或含中文，先复制到本地：" + dest
+                + "（" + (src.Length / 1024 / 1024) + " MB）");
+
+            Stopwatch w = Stopwatch.StartNew();
+            File.Copy(pkgPath, dest, true);
+            Log.Write("复制完成，用时 " + w.ElapsedMilliseconds + " ms");
+
+            return dest;
+        }
+
+        private static bool HasNonAscii(string s)
+        {
+            foreach (char c in s)
+            {
+                if (c > 127)
+                    return true;
+            }
+            return false;
+        }
+
+        private static uint Fnv(string s)
+        {
+            uint h = 2166136261u;
+            foreach (char c in s.ToLowerInvariant())
+            {
+                h ^= c;
+                h *= 16777619u;
+            }
+            return h;
+        }
+
+        /// <summary>整包解压前先看空间，否则 orbis 只会默默失败。</summary>        private static void CheckSpace(string dir, long needBytes)
         {
             try
             {
