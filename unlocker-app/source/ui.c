@@ -399,7 +399,10 @@ void ui_run(void)
                 int unlocked = 0;
 
                 if (api_get(s_cur, name, sizeof(name), &unlocked) == 0) {
-                    if (unlocked) {
+                    if (s_cur == 0 && !unlocked) {
+                        /* 0 号是白金，系统不允许单独解（0x8055160d） */
+                        toast("0 号是白金，请用 L1+○ 一键解锁（自动放最后）");
+                    } else if (unlocked) {
                         toast("这个已经解锁了：%s", name);
                     } else {
                         int rc = api_unlock(s_cur);

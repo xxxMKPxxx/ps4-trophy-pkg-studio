@@ -28,6 +28,7 @@
 #include <orbis/Sysmodule.h>
 #include <orbis/UserService.h>
 #include <orbis/NpTrophy.h>
+#include <orbis/SystemService.h>
 
 #include "gfx.h"
 #include "font.h"
@@ -328,10 +329,26 @@ int api_unlock(int id)
 
 /* ---------------- 启动 ---------------- */
 
+#define BOOT_BG   (0x80000000u | (16u << 16) | (18u << 8) | 24u)
+#define BOOT_FG   (0x80000000u | (232u << 16) | (236u << 8) | 244u)
+#define BOOT_BAR  (0x80000000u | (64u << 16) | (156u << 8) | 255u)
+
+/* 启动阶段先顶掉系统画面；之后每次长操作前都可以再刷一次 */
+static void boot_frame(const char *msg, int slot)
+{
+    gfx_clear(BOOT_BG);
+    gfx_fill(0, 0, GFX_WIDTH, 10, BOOT_BAR);
+    if (slot >= 0 && msg)
+        font_draw(slot, 120, 120, msg, BOOT_FG);
+    gfx_present();
+}
+
 int main(void)
 {
     int rc;
     int uid = 0;
+
+    int boot_font = -1;
 
     log_open();
     log_str("=== trophy unlocker (pkg) start ===\n");
@@ -339,6 +356,35 @@ int main(void)
         hold_and_exit();
         return 1;
     }
+
+    /* 0. 立刻接管显示 —— 必须排在所有慢操作之前。
+       这个 pkg 带原游戏的 trophy00.trp，PS4 启动时会先显示奖杯启动画面；
+       应用不主动 HideSplashScreen、又迟迟不提交首帧，系统画面就一直盖着，
+       用户看到"卡在奖杯画面进不了 UI"，最后系统按启动超时报 CE-34878-0。 */
+    rc = gfx_init();
+    log_hex("gfx_init ", (uint32_t)rc);
+    if (rc != 0) {
+        hold_and_exit();
+        return 1;
+    }
+
+    boot_frame(NULL, -1);                  /* 首帧：纯色，先把系统画面顶掉 */
+    log_str("first frame submitted\n");
+
+    /* VideoOut 打开并提交首帧之后再通知系统收起 splash，顺序反了不生效 */
+    rc = sceSystemServiceHideSplashScreen();
+    log_hex("HideSplashScreen ", (uint32_t)rc);
+
+    rc = font_init(FONT_PATH);
+    log_hex("font_init ", (uint32_t)rc);
+    if (rc != 0) {
+        log_str("字体加载失败（/app0/font.ttf）\n");
+        hold_and_exit();
+        return 1;
+    }
+    boot_font = font_size(40);
+    log_int("boot font slot ", boot_font);
+    boot_frame("Trophy Unlocker  正在读取奖杯…", boot_font);
 
     /* 1. UserService */
     rc = sceUserServiceInitialize(NULL);
@@ -429,22 +475,7 @@ int main(void)
 
     api_refresh();
     load_order();
-
-    /* 4. 画面 + 字体，失败就只能写日志了 */
-    rc = gfx_init();
-    log_hex("gfx_init ", (uint32_t)rc);
-    if (rc != 0) {
-        hold_and_exit();
-        return 1;
-    }
-
-    rc = font_init(FONT_PATH);
-    log_hex("font_init ", (uint32_t)rc);
-    if (rc != 0) {
-        log_str("字体加载失败（/app0/font.ttf）\n");
-        hold_and_exit();
-        return 1;
-    }
+    boot_frame("Trophy Unlocker  就绪", boot_font);
 
     log_str("entering ui\n");
     ui_run();

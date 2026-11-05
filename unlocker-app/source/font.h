@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#define FONT_MAX_SLOTS 4
+#define FONT_MAX_SLOTS 8
 
 int  font_init(const char *path);            /* 初始化 FreeType + 载入字体，0 = 成功 */
 int  font_size(int px);                      /* 用指定像素高度开一个 slot，返回 slot 号，<0 = 失败 */

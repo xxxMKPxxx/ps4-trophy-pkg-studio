@@ -34,7 +34,10 @@ int gfx_init(void)
 
     if (sceKernelCreateEqueue(&s_flipQueue, "unlocker flip queue") < 0)
         return -2;
-    sceVideoOutAddFlipEvent(s_flipQueue, s_video, NULL);
+    {
+        int32_t r = sceVideoOutAddFlipEvent(s_flipQueue, s_video, NULL);
+        log_line("gfx: AddFlipEvent rc=0x%08x", (uint32_t)r);
+    }
 
     s_directSize = (one * 2 + align - 1) / align * align;
     if (sceKernelAllocateDirectMemory(0, sceKernelGetDirectMemorySize(),
@@ -51,9 +54,12 @@ int gfx_init(void)
 
     {
         void *buffers[2];
+        int32_t r;
         buffers[0] = s_fb[0];
         buffers[1] = s_fb[1];
-        if (sceVideoOutRegisterBuffers(s_video, 0, buffers, 2, &s_attr) != 0)
+        r = sceVideoOutRegisterBuffers(s_video, 0, buffers, 2, &s_attr);
+        log_line("gfx: RegisterBuffers rc=0x%08x", (uint32_t)r);
+        if (r != 0)
             return -5;
     }
 
@@ -152,24 +158,31 @@ void gfx_blit_alpha(int x, int y, const uint8_t *src, int w, int h, int pitch, u
 
 void gfx_present(void)
 {
+    int rc;
+    static int logged;
+
     if (!s_ready)
         return;
 
     s_frame++;
-    sceVideoOutSubmitFlip(s_video, s_cur, ORBIS_VIDEO_OUT_FLIP_VSYNC, s_frame);
+    rc = sceVideoOutSubmitFlip(s_video, s_cur, ORBIS_VIDEO_OUT_FLIP_VSYNC, s_frame);
+    if (!logged) {
+        log_line("gfx: first submitFlip rc=0x%08x frame=%d", (uint32_t)rc, s_frame);
+        logged = 1;
+    }
 
-    for (;;) {
+    /* 不依赖 flip event 队列：equeue 没事件时原实现会一直等（或立刻返回），
+       首帧出不来 -> 系统启动画面一直盖着 -> 启动超时 CE-34878-0。
+       改成轮询 flip status + 兜底等待，保证每帧都能推进。 */
+    for (int i = 0; i < 30; i++) {
         OrbisVideoOutFlipStatus st;
-        OrbisKernelEvent ev;
-        int count = 0;
 
         memset(&st, 0, sizeof(st));
-        if (sceVideoOutGetFlipStatus(s_video, &st) == 0 && st.flipArg == s_frame)
+        if (sceVideoOutGetFlipStatus(s_video, &st) == 0 && st.flipArg >= (int64_t)s_frame)
             break;
-
-        if (sceKernelWaitEqueue(s_flipQueue, &ev, 1, &count, 0) != 0)
-            break;
+        sceKernelUsleep(1000);
     }
+    sceKernelUsleep(2000);
 
     s_cur ^= 1;
 }
