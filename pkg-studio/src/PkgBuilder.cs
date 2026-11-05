@@ -11,6 +11,10 @@ namespace PkgStudio
         /// <summary>
         /// 用模板里那套 Unlocker 外壳，把目标游戏的四个文件塞进去，打包成 pkg。
         /// 返回生成的 pkg 路径。
+        /// 
+        /// 注意 eboot.bin 必须是 template 目录里那份 SCE ELF（create-fself 的 -out 产物），
+        /// 普通 ELF / 手工改 e_type 的假 SCE ELF 装进主机都会报
+        /// CE-30045-2 或 CE-41839-5（Cannot start the application）。
         /// </summary>
         public static string Build(GameItem it, string templateDir, string outDir, string workRoot,
                                    Action<string> log)
