@@ -318,11 +318,15 @@ namespace PkgStudio
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("# " + (it.Title ?? "") + "  " + it.TitleId + " 的奖杯解锁顺序");
             sb.AppendLine("# 一行一个：奖杯ID,延迟毫秒（延迟 = 解锁这个之后等多久做下一个）");
-            sb.AppendLine("# 0 号通常就是白金，放最后；不想要的奖杯删掉那一行即可");
-            sb.AppendLine("# 打包时这个文件会被写进 pkg 的 /app0/trophy_order.csv，启动 Unlocker 就按它解锁");
-            sb.AppendLine("1,1500");
-            sb.AppendLine("2,1500");
-            sb.AppendLine("0,2000");
+            sb.AppendLine("# 这个文件会被写进 pkg 的 /app0/trophy_order.csv，启动 Unlocker 就按它走。");
+            sb.AppendLine("#");
+            sb.AppendLine("# 全部注释掉 = 默认行为：除了白金以外全部解锁，0 号白金自动放最后。");
+            sb.AppendLine("# 想自定义就去掉下面几行前面的 #，并按你的顺序填写；");
+            sb.AppendLine("# 0 号是白金，提前解锁会出错，程序会自动把它挪到最末尾。");
+            sb.AppendLine("#");
+            sb.AppendLine("# 1,1500");
+            sb.AppendLine("# 2,1500");
+            sb.AppendLine("# 3,2000");
             return sb.ToString();
         }
 
