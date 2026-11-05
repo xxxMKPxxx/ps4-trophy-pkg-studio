@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -65,6 +66,9 @@ namespace PkgStudio
             ToolStripButton btnImport = new ToolStripButton("导入 PKG...");
             btnImport.Click += OnImportClick;
 
+            ToolStripButton btnClear = new ToolStripButton("清除列表");
+            btnClear.Click += delegate { ClearList(); };
+
             ToolStripButton btnFtp = new ToolStripButton("扫描 FTP");
             btnFtp.Click += OnScanFtpClick;
 
@@ -94,7 +98,7 @@ namespace PkgStudio
 
             bar.Items.AddRange(new ToolStripItem[]
             {
-                btnImport, new ToolStripSeparator(),
+                btnImport, btnClear, new ToolStripSeparator(),
                 btnFtp, txtHost, new ToolStripSeparator(),
                 lblOut, txtOut, btnOut, new ToolStripSeparator(),
                 lblTpl, txtTpl, btnTpl, new ToolStripSeparator(),
@@ -235,6 +239,7 @@ namespace PkgStudio
         private async Task ImportAsync(string[] paths)
         {
             int ok = 0, bad = 0;
+            List<string> errs = new List<string>();
             SetBusy(true, "导入中…");
 
             foreach (string p in paths)
@@ -253,11 +258,53 @@ namespace PkgStudio
                 catch (Exception ex)
                 {
                     bad++;
+                    Log.Error("导入 " + Path.GetFileName(p), ex);
+                    errs.Add(Path.GetFileName(p) + "\r\n" + ex.Message);
                     Status("导入失败 " + Path.GetFileName(p) + " : " + FirstLine(ex.Message));
                 }
             }
 
             SetBusy(false, "导入完成：成功 " + ok + " 个，失败 " + bad + " 个");
+            if (errs.Count > 0)
+                ShowErrors("导入失败", errs);
+        }
+
+        private void ClearList()
+        {
+            if (items.Count == 0)
+            {
+                Status("列表已经是空的");
+                return;
+            }
+            if (MessageBox.Show("清空游戏列表？已生成的 pkg 文件不会被删除。", "清除列表",
+                    MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+                return;
+
+            grid.Rows.Clear();
+            items.Clear();
+            Status("列表已清空");
+        }
+
+        private void ShowErrors(string title, List<string> errs)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("失败 " + errs.Count + " 个：");
+            sb.AppendLine();
+
+            int n = 0;
+            foreach (string e in errs)
+            {
+                string text = e.Length > 900 ? e.Substring(0, 900) + "…" : e;
+                sb.AppendLine("· " + text);
+                sb.AppendLine();
+                if (++n >= 5)
+                {
+                    sb.AppendLine("（还有 " + (errs.Count - n) + " 条，完整内容见 exe 同目录 pkgstudio.log）");
+                    break;
+                }
+            }
+
+            MessageBox.Show(sb.ToString(), title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private void AddRow(GameItem it)
@@ -347,6 +394,12 @@ namespace PkgStudio
 
             SetBusy(true, "开始打包…");
             int ok = 0, skip = 0, fail = 0;
+            List<string> errs = new List<string>();
+
+            Log.Write("==== 开始打包 ====");
+            Log.Write("模板目录: " + TemplateDir);
+            Log.Write("orbis: " + OrbisExe + "  存在=" + File.Exists(OrbisExe));
+            Log.Write("输出目录: " + outDir);
 
             foreach (GameItem it in todo)
             {
@@ -372,16 +425,21 @@ namespace PkgStudio
                         delegate (string s) { }));
 
                     AddOutput(pkg);
+                    Log.Write("打包成功: " + pkg);
                     ok++;
                 }
                 catch (Exception ex)
                 {
                     fail++;
+                    Log.Error("打包 " + it.Title + " (" + it.TitleId + ")", ex);
+                    errs.Add(it.Title + " [" + it.TitleId + "]\r\n" + ex.Message);
                     Status("打包失败 " + it.Title + " : " + FirstLine(ex.Message));
                 }
             }
 
             SetBusy(false, "完成：成功 " + ok + "，跳过 " + skip + "，失败 " + fail);
+            if (errs.Count > 0)
+                ShowErrors("打包失败", errs);
         }
 
         private void AddOutput(string path)

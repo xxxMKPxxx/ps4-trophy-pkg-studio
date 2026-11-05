@@ -61,8 +61,17 @@ namespace PkgStudio
 
                 string newId = NewTitleId(oldId);
                 Sfo.ReplaceInPlace(sfo, "TITLE_ID", oldId, newId);
-                Sfo.ReplaceInPlace(sfo, "CONTENT_ID", oldId, newId);
+                try
+                {
+                    Sfo.ReplaceInPlace(sfo, "CONTENT_ID", oldId, newId);
+                }
+                catch (Exception ex)
+                {
+                    // CONTENT_ID 里不一定含完整的 9 字符，改不动就只记日志，不中断
+                    Log.Write("警告：" + it.TitleId + " 的 CONTENT_ID 未改（" + ex.Message + "）");
+                }
                 string newContentId = Sfo.Get(sfo, "CONTENT_ID");
+                Log.Write("TITLE_ID: " + oldId + " -> " + newId + " / CONTENT_ID: " + newContentId);
                 log("TITLE_ID: " + oldId + " -> " + newId);
                 log("CONTENT_ID: " + newContentId);
 
@@ -99,6 +108,7 @@ namespace PkgStudio
 
                 string output = PkgReader.Orb(orbis,
                     "img_create --oformat pkg \"" + gp4 + "\" \"" + outDir + "\"", work);
+                Log.Write("img_create 输出: " + (string.IsNullOrEmpty(output) ? "(空)" : Trim(output)));
 
                 string made = null;
                 foreach (string f in Directory.GetFiles(outDir, "*.pkg"))

@@ -91,25 +91,43 @@ namespace PkgStudio
 
             it.Nptitle = Download(url + "nptitle.dat");
             it.Npbind = Download(url + "npbind.dat");
+
+            Log.Write("补齐 " + it.TitleId + ": nptitle=" + (it.Nptitle == null ? "无" : it.Nptitle.Length + "B")
+                + " npbind=" + (it.Npbind == null ? "无" : it.Npbind.Length + "B"));
+
             if (it.Npbind == null || it.Npbind.Length == 0)
-                throw new Exception("npbind.dat 取不到");
+                throw new Exception("远端 " + url + " 下没有 npbind.dat（这个游戏可能没装奖杯数据）");
+            if (it.Nptitle == null || it.Nptitle.Length == 0)
+                throw new Exception("远端 " + url + " 下没有 nptitle.dat");
 
             string npwr = FindNpwr(it.Npbind);
             if (npwr == null)
                 npwr = FindNpwr(it.Nptitle);
             if (npwr == null)
-                throw new Exception("npbind 里找不到 NP Comm ID");
+                throw new Exception("npbind.dat 里找不到 NPWRxxxxx");
 
             int idx = url.IndexOf("appmeta/", StringComparison.OrdinalIgnoreCase);
             if (idx < 0)
                 throw new Exception("远端路径格式异常: " + url);
 
             string baseUrl = url.Substring(0, idx);
-            string trophyUrl = baseUrl + "user/trophy/conf/" + npwr + "/TROPHY.TRP";
-            it.Trophy = Download(trophyUrl);
+
+            // 奖杯目录名可能是 NPWR12345 或 NPWR12345_00，两种都试
+            string[] ids = new string[] { npwr, npwr + "_00" };
+            foreach (string id in ids)
+            {
+                byte[] t = Download(baseUrl + "user/trophy/conf/" + id + "/TROPHY.TRP");
+                if (t != null && t.Length > 0)
+                {
+                    it.Trophy = t;
+                    Log.Write("奖杯文件取自 " + id + " (" + t.Length + "B)");
+                    break;
+                }
+            }
 
             if (it.Trophy == null || it.Trophy.Length == 0)
-                throw new Exception("TROPHY.TRP 取不到 (" + npwr + ")");
+                throw new Exception("TROPHY.TRP 取不到，试过 " + string.Join(" 和 ", ids)
+                    + "（远端 " + baseUrl + "user/trophy/conf/）");
 
             log("已补齐 " + it.TitleId + " 的奖杯文件 (" + npwr + ")");
         }

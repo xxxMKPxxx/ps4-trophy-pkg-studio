@@ -38,6 +38,7 @@
     <Compile Include="src\PkgReader.cs" />
     <Compile Include="src\FtpSource.cs" />
     <Compile Include="src\PkgBuilder.cs" />
+    <Compile Include="src\Log.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

@@ -15,13 +15,19 @@ namespace PkgStudio
             string tmp = Path.Combine(workRoot, "import_" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(tmp);
 
-            string log = Orb(orbisExe,
+            Log.Write("导入 pkg: " + pkgPath);
+            string orbOut = Orb(orbisExe,
                 "img_extract --passcode 00000000000000000000000000000000 \"" + pkgPath + "\" \"" + tmp + "\"",
                 workRoot);
 
+            if (!string.IsNullOrEmpty(orbOut))
+                Log.Write("img_extract 输出: " + orbOut.Trim());
+
             string sfoPath = FindFile(tmp, "param.sfo");
             if (sfoPath == null)
-                throw new Exception("解包后找不到 param.sfo。零售原包没有 passcode 解不开，只能导入 fpkg。");
+                throw new Exception("解包后找不到 param.sfo。\r\n"
+                    + "零售原包没有 passcode 解不开，只能导入 fpkg。\r\n\r\n"
+                    + "orbis-pub-cmd 输出：\r\n" + Trim(orbOut));
 
             string dir = Path.GetDirectoryName(sfoPath);
 
@@ -40,8 +46,19 @@ namespace PkgStudio
             it.Npbind = TryRead(dir, "npbind.dat");
             it.Trophy = TryReadTrophy(dir);
 
+            Log.Write("导入结果: " + it.Title + " / " + it.TitleId + " / " + it.Category
+                + " / nptitle=" + (it.Nptitle == null ? "无" : it.Nptitle.Length + "B")
+                + " / npbind=" + (it.Npbind == null ? "无" : it.Npbind.Length + "B")
+                + " / trophy=" + (it.Trophy == null ? "无" : it.Trophy.Length + "B"));
+
             try { Directory.Delete(tmp, true); } catch { }
             return it;
+        }
+
+        private static string Trim(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "(无输出)";
+            return s.Length > 1200 ? s.Substring(0, 1200) : s;
         }
 
         public static string Orb(string exe, string args, string workDir)
