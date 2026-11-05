@@ -3,12 +3,18 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace PkgStudio
 {
     /// <summary>
     /// 从 PS4 的 FTP（GoldHEN 内置，端口 2121）扫已安装游戏。
-    /// 只下 param.sfo 用来做分类，真正打包时再补另外三个文件。
+    ///
+    /// 速度上的三个关键点：
+    ///  1. appmeta 下的目录名本身就是 Title ID，先用 CUS 前缀过滤，
+    ///     不去下载那一堆 NPXS 系统应用的 param.sfo；
+    ///  2. param.sfo 并发下载（原来一个个来，几百个游戏要等很久）；
+    ///  3. 超时 20s→12s、重试 3→2 次，小文件失败通常是真的没有。
     /// </summary>
     internal static class FtpSource
     {
@@ -22,11 +28,19 @@ namespace PkgStudio
             "mnt/usb1/user/appmeta/"
         };
 
+        private const int Parallelism = 8;
+        private const int TimeoutMs = 12000;
+
         public static List<GameItem> Scan(string host, Action<string> log)
         {
+            ServicePointManager.DefaultConnectionLimit = 32;
+
+            string root = "ftp://" + host + ":2121/";
             List<GameItem> list = new List<GameItem>();
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string root = "ftp://" + host + ":2121/";
+            object gate = new object();
+
+            System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
 
             foreach (string d in Dirs)
             {
@@ -42,50 +56,63 @@ namespace PkgStudio
                     continue;
                 }
 
-                log("目录 " + d + " 条目 " + names.Count);
+                // 目录名就是 Title ID，先过滤掉系统应用，省掉大量无用下载
+                List<string> targets = new List<string>();
                 foreach (string n in names)
                 {
-                    if (n == "." || n == "..")
+                    if (n.Length < 4)
                         continue;
-
-                    try
-                    {
-                        byte[] param = Download(url + n + "/param.sfo");
-                        if (param == null || param.Length == 0)
-                            throw new Exception("param.sfo 取不到");
-
-                        GameItem it = new GameItem();
-                        it.Source = "FTP";
-                        it.Origin = url + n;
-                        it.RootUrl = root;
-                        it.Param = param;
-                        it.Title = Sfo.Get(param, "TITLE");
-                        it.TitleId = Sfo.Get(param, "TITLE_ID");
-                        it.ContentId = Sfo.Get(param, "CONTENT_ID");
-                        it.Category = Sfo.Get(param, "CATEGORY");
-                        it.AppVer = Sfo.Get(param, "APP_VER");
-                        it.Kind = GameItem.KindOf(it.Category);
-
-                        if (string.IsNullOrEmpty(it.TitleId))
-                            throw new Exception("没有 TITLE_ID");
-
-                        // 只要 CUS 开头的零售 Title ID；更新包不列出来
-                        if (!it.TitleId.StartsWith("CUS", StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        if (it.Kind == GameKind.Update)
-                            continue;
-
-                        if (!seen.Add(it.TitleId))
-                            continue;
-
-                        list.Add(it);
-                    }
-                    catch (Exception ex)
-                    {
-                        log("跳过 " + n + " : " + ex.Message);
-                    }
+                    if (!n.StartsWith("CUS", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    targets.Add(n);
                 }
+
+                log("目录 " + d + " 条目 " + names.Count + "，CUS 开头 " + targets.Count);
+
+                Parallel.ForEach(targets,
+                    new ParallelOptions { MaxDegreeOfParallelism = Parallelism },
+                    n =>
+                    {
+                        try
+                        {
+                            byte[] param = Download(url + n + "/param.sfo");
+                            if (param == null || param.Length == 0)
+                                throw new Exception("param.sfo 取不到");
+
+                            GameItem it = new GameItem();
+                            it.Source = "FTP";
+                            it.Origin = url + n;
+                            it.RootUrl = root;
+                            it.Param = param;
+                            it.Title = Sfo.Get(param, "TITLE");
+                            it.TitleId = Sfo.Get(param, "TITLE_ID");
+                            it.ContentId = Sfo.Get(param, "CONTENT_ID");
+                            it.Category = Sfo.Get(param, "CATEGORY");
+                            it.AppVer = Sfo.Get(param, "APP_VER");
+                            it.Kind = GameItem.KindOf(it.Category);
+
+                            if (string.IsNullOrEmpty(it.TitleId))
+                                throw new Exception("没有 TITLE_ID");
+                            if (it.Kind == GameKind.Update)
+                                return;
+
+                            lock (gate)
+                            {
+                                if (seen.Add(it.TitleId))
+                                    list.Add(it);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            lock (gate) { }
+                            log("跳过 " + n + " : " + ex.Message);
+                        }
+                    });
             }
+
+            watch.Stop();
+            Log.Write("FTP 扫描完成: " + list.Count + " 个，用时 " + watch.ElapsedMilliseconds + " ms");
+            log("扫描完成：" + list.Count + " 个，用时 " + (watch.ElapsedMilliseconds / 1000.0).ToString("0.0") + " 秒");
             return list;
         }
 
@@ -118,8 +145,7 @@ namespace PkgStudio
             if (string.IsNullOrEmpty(root))
                 throw new Exception("缺少 FTP 根路径（请重新扫描一次）");
 
-            // 奖杯不在 appmeta 下面，而是根目录的 /user/trophy/conf/<NPWR>/TROPHY.TRP
-            // 目录名可能是 NPWR12345 或 NPWR12345_00，两种都试
+            // 奖杯在根目录的 /user/trophy/conf/<NPWR>/TROPHY.TRP，不在 appmeta 下面
             string[] ids = new string[] { npwr, npwr + "_00" };
             foreach (string id in ids)
             {
@@ -171,8 +197,9 @@ namespace PkgStudio
             req.Method = WebRequestMethods.Ftp.ListDirectoryDetails;
             req.UsePassive = true;
             req.UseBinary = true;
-            req.Timeout = 20000;
-            req.ReadWriteTimeout = 20000;
+            req.KeepAlive = false;
+            req.Timeout = TimeoutMs;
+            req.ReadWriteTimeout = TimeoutMs;
 
             using (FtpWebResponse resp = (FtpWebResponse)req.GetResponse())
             using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
@@ -182,7 +209,7 @@ namespace PkgStudio
                 {
                     if (line.Length == 0)
                         continue;
-                    // 只认目录行；ls -l 的 d，以及 MLSD 的 type=dir
+
                     bool isDir = line[0] == 'd' ||
                                  line.StartsWith("type=dir", StringComparison.OrdinalIgnoreCase);
                     if (!isDir)
@@ -200,7 +227,7 @@ namespace PkgStudio
 
         private static byte[] Download(string url)
         {
-            for (int attempt = 0; attempt < 3; attempt++)
+            for (int attempt = 0; attempt < 2; attempt++)
             {
                 try
                 {
@@ -209,8 +236,9 @@ namespace PkgStudio
                     req.Method = WebRequestMethods.Ftp.DownloadFile;
                     req.UsePassive = true;
                     req.UseBinary = true;
-                    req.Timeout = 20000;
-                    req.ReadWriteTimeout = 20000;
+                    req.KeepAlive = false;
+                    req.Timeout = TimeoutMs;
+                    req.ReadWriteTimeout = TimeoutMs;
 
                     using (FtpWebResponse resp = (FtpWebResponse)req.GetResponse())
                     using (Stream s = resp.GetResponseStream())
@@ -225,7 +253,7 @@ namespace PkgStudio
                 }
                 catch
                 {
-                    System.Threading.Thread.Sleep(300);
+                    System.Threading.Thread.Sleep(150);
                 }
             }
             return null;

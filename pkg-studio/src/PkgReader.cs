@@ -18,19 +18,51 @@ namespace PkgStudio
             string exe = Orbis.EnsureTool(templateDir, workRoot);
             string tools = Path.GetDirectoryName(exe);
 
+            const string Zeros = "00000000000000000000000000000000";
             Log.Write("导入 pkg: " + pkgPath);
-            string orbOut = Orbis.Run(exe,
-                "img_extract --passcode 00000000000000000000000000000000 \"" + pkgPath + "\" \"" + tmp + "\"",
-                tools);
 
-            if (!string.IsNullOrEmpty(orbOut))
-                Log.Write("img_extract 输出: " + orbOut.Trim());
+            Stopwatch watch = Stopwatch.StartNew();
+            string sfoPath = null;
+            string lastOut = null;
 
-            string sfoPath = FindFile(tmp, "param.sfo");
+            // 关键：只解 sce_sys（几个 MB），不要整包解压（可能是几十 GB）。
+            // img_extract 支持 "<pkg>:<内部路径>" 这种选择性解包。
+            string[] selectors = new string[] { ":sce_sys", ":Image0/sce_sys" };
+            int n = 0;
+            foreach (string sel in selectors)
+            {
+                n++;
+                string sub = Path.Combine(tmp, "sel" + n);
+                watch.Restart();
+
+                lastOut = Orbis.Run(exe,
+                    "img_extract --passcode " + Zeros + " \"" + pkgPath + sel + "\" \"" + sub + "\"",
+                    tools);
+
+                sfoPath = FindFile(tmp, "param.sfo");
+                Log.Write("选择性解包 " + sel + " 用时 " + watch.ElapsedMilliseconds + " ms，"
+                    + (sfoPath == null ? "未拿到 param.sfo" : "成功")
+                    + "，输出: " + (string.IsNullOrEmpty(lastOut) ? "(空)" : lastOut.Trim()));
+
+                if (sfoPath != null)
+                    break;
+            }
+
+            // 老版本工具不支持选择性解包时，退回整包
             if (sfoPath == null)
-                throw new Exception("解包后找不到 param.sfo。\r\n"
-                    + "零售原包没有 passcode 解不开，只能导入 fpkg。\r\n\r\n"
-                    + "orbis-pub-cmd 输出：\r\n" + Trim(orbOut));
+            {
+                Log.Write("退回整包解压（会慢很多）");
+                watch.Restart();
+                lastOut = Orbis.Run(exe,
+                    "img_extract --passcode " + Zeros + " \"" + pkgPath + "\" \"" + tmp + "\"",
+                    tools);
+                Log.Write("整包解压用时 " + watch.ElapsedMilliseconds + " ms");
+                sfoPath = FindFile(tmp, "param.sfo");
+                if (sfoPath == null)
+                    throw new Exception("解包后找不到 param.sfo。\r\n"
+                        + "零售原包没有 passcode 解不开，只能导入 fpkg。\r\n\r\n"
+                        + "orbis-pub-cmd 输出：\r\n" + Trim(lastOut));
+            }
 
             string dir = Path.GetDirectoryName(sfoPath);
 
