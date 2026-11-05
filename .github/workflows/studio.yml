@@ -60,6 +60,19 @@ jobs:
           # PS4_Tools.dll 运行时还会用到同目录的其它依赖，一并拷过去
           Copy-Item '.\PS4_Tools\TrophyUnlocker\bin\Release\*.dll' "$out\" -Force
 
+          # 取最新构建的解锁器 eboot.bin（app-builds 分支），放到 template 下，
+          # 打 pkg 时会自动替换模板自带的那个 eboot
+          git fetch --depth 1 origin app-builds 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            git checkout FETCH_HEAD -- eboot.bin 2>$null
+            if (Test-Path '.\eboot.bin') {
+              Copy-Item '.\eboot.bin' "$out\template\eboot.bin" -Force
+              Write-Host '已放入自定义 eboot.bin（解锁器 app）'
+            }
+          } else {
+            Write-Host 'app-builds 还没产物，先用手工/模板 eboot'
+          }
+
           Get-ChildItem "$out" -Filter *.dll | Select-Object Name, Length | Format-Table
 
       - uses: actions/upload-artifact@v4

@@ -91,9 +91,36 @@ namespace PkgStudio
                 Directory.CreateDirectory(trophyDir);
                 File.WriteAllBytes(Path.Combine(trophyDir, "trophy00.trp"), it.Trophy);
 
+                // 4.5 自定义 eboot：template 目录下有 eboot.bin 就替换掉模板自带的
+                //     （那是"启动即按顺序解锁"的独立 app，替换后 pkg 里跑的就是我们的逻辑）
+                string ebootCustom = Path.Combine(templateDir, "eboot.bin");
+                if (File.Exists(ebootCustom))
+                {
+                    File.Copy(ebootCustom, Path.Combine(target, "eboot.bin"), true);
+                    log("已替换 eboot.bin（解锁器 app）");
+                    Log.Write("使用自定义 eboot: " + ebootCustom);
+                }
+
+                // 4.6 解锁顺序表：输出目录里有 trophy_order_<TITLEID>.csv 就一起打进包里
+                string orderLocal = Path.Combine(outDir, "trophy_order_" + it.TitleId + ".csv");
+                bool hasOrder = File.Exists(orderLocal);
+                if (hasOrder)
+                {
+                    File.Copy(orderLocal, Path.Combine(target, "trophy_order.csv"), true);
+                    log("已加入解锁顺序表");
+                    Log.Write("顺序表: " + orderLocal);
+                }
+
                 // 4. gp4：只改 content_id
                 string xml = File.ReadAllText(gp4Src, Encoding.UTF8);
                 xml = ReplaceContentId(xml, newContentId);
+
+                if (hasOrder && xml.IndexOf("</files>", StringComparison.Ordinal) > 0)
+                {
+                    xml = xml.Replace("</files>",
+                        "    <file targ_path=\"trophy_order.csv\" orig_path=\"CONTENTS\\trophy_order.csv\" />\r\n  </files>");
+                }
+
                 string gp4 = Path.Combine(work, "project.gp4");
                 File.WriteAllText(gp4, xml, new UTF8Encoding(false));
 

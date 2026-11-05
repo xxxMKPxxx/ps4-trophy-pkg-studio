@@ -1,0 +1,74 @@
+name: build unlocker app
+
+# 独立 pkg 版的 eboot.bin（在 Unlocker 的 pkg 里跑，不依赖插件）
+on:
+  push:
+    branches:
+      - 'feat/**'
+      - 'main'
+    paths:
+      - 'unlocker-app/**'
+      - '.github/workflows/app.yml'
+  workflow_dispatch:
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install llvm/lld
+        run: sudo apt-get update && sudo apt-get install -y llvm lld
+
+      - name: Download OpenOrbis toolchain
+        working-directory: unlocker-app
+        run: |
+          curl -sL https://github.com/illusion0001/OpenOrbis-PS4-Toolchain/releases/latest/download/toolchain.tar.gz | tar xz -C ./
+          echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/unlocker-app/OpenOrbis/PS4Toolchain" >> $GITHUB_ENV
+
+      - name: Build eboot.bin
+        working-directory: unlocker-app
+        run: make clean && make 2>&1 | tee ../app-build.log
+
+      - name: 检查产物
+        working-directory: unlocker-app
+        run: |
+          ls -l eboot.bin || (echo "没有 eboot.bin" && exit 1)
+          file eboot.bin || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unlocker-eboot
+          path: |
+            unlocker-app/eboot.bin
+            app-build.log
+          if-no-files-found: warn
+
+      - name: 发布到 app-builds 分支
+        if: always()
+        run: |
+          set -e
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+          git checkout --orphan app-builds
+          git reset
+
+          if [ -f unlocker-app/eboot.bin ]; then
+            cp unlocker-app/eboot.bin ./eboot.bin
+            git add -f eboot.bin
+          fi
+          if [ -f app-build.log ]; then git add -f app-build.log; fi
+
+          if git diff --cached --quiet; then
+            echo '没有可提交的产物'
+            exit 0
+          fi
+
+          git commit -m "eboot ${GITHUB_SHA}"
+          git push -f origin HEAD:refs/heads/app-builds
