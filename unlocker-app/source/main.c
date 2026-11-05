@@ -53,6 +53,7 @@ static int g_uid;
 static char    g_name[MAX_TROPHIES][128];
 static uint8_t g_unlocked[MAX_TROPHIES];
 static int     g_count;
+static int     s_boot_font = -1;   /* 启动画面字体 slot，失败提示也用它 */
 
 static int g_order_id[MAX_ORDER];
 static int g_order_delay[MAX_ORDER];
@@ -138,11 +139,47 @@ void log_line(const char *fmt, ...)
         sceKernelFsync(g_logfd);
 }
 
-static void hold_and_exit(void)
+static void boot_frame(const char *msg, int slot);
+
+/* 所有失败分支都必须走这里：
+   1) 把原因画到屏幕上，别让用户对着「正在读取奖杯…」以为卡死；
+   2) 清理 VideoOut / direct memory。以前失败分支直接 return，
+      没调 gfx_shutdown，进程被系统回收时会报 CE-34878-0。 */
+static void hold_and_exit(const char *msg)
 {
+    if (msg && s_boot_font >= 0)
+        boot_frame(msg, s_boot_font);
     if (g_logfd >= 0)
         sceKernelFsync(g_logfd);
     sceKernelSleep(FAIL_HOLD_SEC);
+    gfx_shutdown();
+    log_str("gfx shutdown ok\n");
+    log_str("=== end (failed) ===\n");
+}
+
+/* 奖杯 context/handle 成对创建，方便注册失败时整体重建 */
+static int create_pair(int uid)
+{
+    int r = sceNpTrophyCreateContext(&g_ctx, uid, 0, 0);
+    log_hex("CreateContext ", (uint32_t)r);
+    if (r != 0)
+        return r;
+
+    r = sceNpTrophyCreateHandle(&g_hdl);
+    log_hex("CreateHandle ", (uint32_t)r);
+    return r;
+}
+
+static void destroy_pair(void)
+{
+    if (g_hdl >= 0) {
+        sceNpTrophyDestroyHandle(g_hdl);
+        g_hdl = -1;
+    }
+    if (g_ctx >= 0) {
+        sceNpTrophyDestroyContext(g_ctx);
+        g_ctx = -1;
+    }
 }
 
 /* ---------------- 顺序表 ---------------- */
@@ -339,7 +376,7 @@ static void boot_frame(const char *msg, int slot)
     gfx_clear(BOOT_BG);
     gfx_fill(0, 0, GFX_WIDTH, 10, BOOT_BAR);
     if (slot >= 0 && msg)
-        font_draw(slot, 120, 120, msg, BOOT_FG);
+        font_draw_fit(slot, 120, 120, GFX_WIDTH - 240, msg, BOOT_FG);
     gfx_present();
 }
 
@@ -348,12 +385,10 @@ int main(void)
     int rc;
     int uid = 0;
 
-    int boot_font = -1;
-
     log_open();
     log_str("=== trophy unlocker (pkg) start ===\n");
     if (g_logfd < 0) {
-        hold_and_exit();
+        hold_and_exit("日志无法写入 /data");
         return 1;
     }
 
@@ -364,7 +399,7 @@ int main(void)
     rc = gfx_init();
     log_hex("gfx_init ", (uint32_t)rc);
     if (rc != 0) {
-        hold_and_exit();
+        hold_and_exit("显示初始化失败，无法启动");
         return 1;
     }
 
@@ -379,12 +414,12 @@ int main(void)
     log_hex("font_init ", (uint32_t)rc);
     if (rc != 0) {
         log_str("字体加载失败（/app0/font.ttf）\n");
-        hold_and_exit();
+        hold_and_exit("字体加载失败：包里缺少 font.ttf");
         return 1;
     }
-    boot_font = font_size(40);
-    log_int("boot font slot ", boot_font);
-    boot_frame("Trophy Unlocker  正在读取奖杯…", boot_font);
+    s_boot_font = font_size(40);
+    log_int("boot font slot ", s_boot_font);
+    boot_frame("Trophy Unlocker  正在读取奖杯…", s_boot_font);
 
     /* 1. UserService */
     rc = sceUserServiceInitialize(NULL);
@@ -417,7 +452,7 @@ int main(void)
     log_int("user id ", uid);
     if (uid <= 0) {
         log_str("拿不到用户，放弃\n");
-        hold_and_exit();
+        hold_and_exit("拿不到登录用户，无法启动");
         return 1;
     }
     g_uid = uid;
@@ -426,24 +461,52 @@ int main(void)
     rc = sceSysmoduleLoadModule(ORBIS_SYSMODULE_NP_TROPHY);
     log_hex("LoadModule NP_TROPHY ", (uint32_t)rc);
 
-    rc = sceNpTrophyCreateContext(&g_ctx, uid, 0, 0);
-    log_hex("CreateContext ", (uint32_t)rc);
-    if (rc != 0) {
-        hold_and_exit();
-        return 1;
+    /* 2.1 注册 context（带重试）
+       实测会间歇性返回 0x805516f4：上一次进程被强杀、或奖杯服务还在写
+       上一次解锁的数据时，注册会被拒。原来直接 hold_and_exit，画面停在
+       「正在读取奖杯…」看起来像卡死。现在最多试 6 次，每次把状态画出来；
+       第 3 次起连 context 一起重建，排除「残留上下文」这一类原因。 */
+    {
+        const int TRIES = 6;
+        char msg[192];
+
+        rc = create_pair(uid);
+
+        for (int attempt = 1; attempt <= TRIES; attempt++) {
+            if (rc == 0) {
+                rc = sceNpTrophyRegisterContext(g_ctx, g_hdl, 0);
+                log_hex("RegisterContext ", (uint32_t)rc);
+            }
+            if (rc == 0)
+                break;
+            if (attempt == TRIES)
+                break;
+
+            log_int("register retry ", attempt);
+            snprintf(msg, sizeof(msg),
+                     "Trophy Unlocker  奖杯服务未就绪 0x%08x，重试 %d/%d…",
+                     (uint32_t)rc, attempt + 1, TRIES);
+            boot_frame(msg, s_boot_font);
+            sceKernelUsleep(attempt < 3 ? 700000 : 1500000);
+
+            if (attempt >= 3) {
+                /* 销毁的是「注册失败、没有异步解锁在跑」的 context，
+                   和进程退出时销毁（会崩）不是一回事 */
+                destroy_pair();
+                rc = create_pair(uid);
+            } else {
+                rc = 0;                /* 保留 context，直接再注册一次 */
+            }
+        }
     }
 
-    rc = sceNpTrophyCreateHandle(&g_hdl);
-    log_hex("CreateHandle ", (uint32_t)rc);
     if (rc != 0) {
-        hold_and_exit();
-        return 1;
-    }
-
-    rc = sceNpTrophyRegisterContext(g_ctx, g_hdl, 0);
-    log_hex("RegisterContext ", (uint32_t)rc);
-    if (rc != 0) {
-        hold_and_exit();
+        char msg[192];
+        snprintf(msg, sizeof(msg),
+                 "Trophy Unlocker  奖杯注册失败 0x%08x，请关闭本程序后重新打开",
+                 (uint32_t)rc);
+        log_str("register gave up\n");
+        hold_and_exit(msg);
         return 1;
     }
 
@@ -469,13 +532,13 @@ int main(void)
 
     if (g_count <= 0) {
         log_str("这个包没有奖杯集\n");
-        hold_and_exit();
+        hold_and_exit("这个包里没有奖杯集（trophy00.trp 无效）");
         return 1;
     }
 
     api_refresh();
     load_order();
-    boot_frame("Trophy Unlocker  就绪", boot_font);
+    boot_frame("Trophy Unlocker  就绪", s_boot_font);
 
     log_str("entering ui\n");
     ui_run();
