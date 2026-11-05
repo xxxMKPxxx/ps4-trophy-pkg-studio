@@ -40,6 +40,11 @@ namespace PkgStudio
             public uint NameOffset;
             public uint Offset;
             public uint Size;
+            public uint Flags1;
+            public uint Flags2;
+
+            /// <summary>flags1 最高位为 1 表示这个条目的数据是加密的（fpkg 里常见）。</summary>
+            public bool Encrypted { get { return (Flags1 & 0x80000000u) != 0; } }
         }
 
         internal class Index
@@ -62,9 +67,10 @@ namespace PkgStudio
             return GetByName(pkgUrl, "param.sfo");
         }
 
-        /// <summary>取 nptitle.dat / npbind.dat（没有名字，按 id 认）。</summary>
-        public static byte[] GetSpecial(string pkgUrl, uint id)
+        /// <summary>取 nptitle.dat / npbind.dat（没有名字，按 id 认）。encrypted 说明原始条目是密文。</summary>
+        public static byte[] GetSpecial(string pkgUrl, uint id, out bool encrypted)
         {
+            encrypted = false;
             try
             {
                 Index idx = GetIndex(pkgUrl);
@@ -75,8 +81,11 @@ namespace PkgStudio
                 {
                     if (e.Id != id || e.Size == 0)
                         continue;
+
+                    encrypted = e.Encrypted;
                     byte[] d = ReadRange(pkgUrl, e.Offset, (int)e.Size);
-                    Log.Write("远程读 " + IdName(id) + " 成功 (" + e.Size + "B)");
+                    Log.Write("远程读 " + IdName(id) + " 成功 (" + e.Size + "B"
+                        + (encrypted ? "，加密条目，需要解密" : "") + ")");
                     return d;
                 }
                 Log.Write("远程包内没有 id=0x" + id.ToString("X4") + " (" + IdName(id) + ")");
@@ -85,6 +94,28 @@ namespace PkgStudio
             catch (Exception ex)
             {
                 Log.Write("远程读 " + IdName(id) + " 失败: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>这个 id 的条目是不是加密的；条目不存在返回 null。</summary>
+        public static bool? IsEncrypted(string pkgUrl, uint id)
+        {
+            try
+            {
+                Index idx = GetIndex(pkgUrl);
+                if (idx == null)
+                    return null;
+
+                foreach (Entry e in idx.Entries)
+                {
+                    if (e.Id == id && e.Size > 0)
+                        return e.Encrypted;
+                }
+                return null;
+            }
+            catch
+            {
                 return null;
             }
         }
@@ -222,6 +253,8 @@ namespace PkgStudio
                 Entry e = new Entry();
                 e.Id = U32(table, o + 0x00);
                 e.NameOffset = U32(table, o + 0x04);
+                e.Flags1 = U32(table, o + 0x08);
+                e.Flags2 = U32(table, o + 0x0C);
                 e.Offset = U32(table, o + 0x10);
                 e.Size = U32(table, o + 0x14);
 

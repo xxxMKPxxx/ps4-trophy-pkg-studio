@@ -25,6 +25,9 @@ namespace PkgStudio
 
         public GameKind Kind = GameKind.Unknown;
 
+        /// <summary>远程 pkg 里的 nptitle/npbind 是加密条目，没有明文版本 —— 只能靠本地 pkg 处理。</summary>
+        public bool NeedsLocalPkg;
+
         public byte[] Param;
         public byte[] Nptitle;
         public byte[] Npbind;
@@ -32,7 +35,7 @@ namespace PkgStudio
 
         public bool Usable
         {
-            get { return Kind == GameKind.Game; }
+            get { return Kind == GameKind.Game && !NeedsLocalPkg; }
         }
 
         public bool FilesLoaded
@@ -58,7 +61,8 @@ namespace PkgStudio
         {
             get
             {
-                if (Kind == GameKind.Game) return "可打包";
+                if (Kind == GameKind.Game)
+                    return NeedsLocalPkg ? "需本地 pkg（远程为密文）" : "可打包";
                 if (Kind == GameKind.Unknown) return "类别无法识别，不可用";
                 return "不可用（" + KindText + "不能做奖杯包）";
             }

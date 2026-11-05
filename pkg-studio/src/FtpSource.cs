@@ -217,6 +217,15 @@ namespace PkgStudio
                         if (it.Kind == GameKind.Update)
                             return;
 
+                        // 远端的 nptitle/npbind 如果是加密条目，就提前标出来，
+                        // 免得用户以为"可打包"，点了才失败。
+                        bool? enc = RemotePkg.IsEncrypted(pkgUrl, RemotePkg.IdNptitle);
+                        if (enc == true)
+                        {
+                            it.NeedsLocalPkg = true;
+                            Log.Write("标记 " + tid + "：app.pkg 里的 nptitle/npbind 是加密条目，需用本地 pkg 导入");
+                        }
+
                         lock (gate)
                         {
                             if (seen.Add(it.TitleId))
@@ -261,19 +270,31 @@ namespace PkgStudio
             }
 
             // 元数据目录里没有 → 直接从那个 app.pkg 里读（只读包头和条目表，几十 KB）
+            bool encTitle = false, encBind = false;
+
             if ((it.Nptitle == null || it.Nptitle.Length == 0) && !string.IsNullOrEmpty(it.PkgUrl))
             {
                 Log.Write("元数据目录没有 nptitle.dat，改从 app.pkg 读");
-                it.Nptitle = RemotePkg.GetSpecial(it.PkgUrl, RemotePkg.IdNptitle);
+                it.Nptitle = RemotePkg.GetSpecial(it.PkgUrl, RemotePkg.IdNptitle, out encTitle);
             }
             if ((it.Npbind == null || it.Npbind.Length == 0) && !string.IsNullOrEmpty(it.PkgUrl))
             {
                 Log.Write("元数据目录没有 npbind.dat，改从 app.pkg 读");
-                it.Npbind = RemotePkg.GetSpecial(it.PkgUrl, RemotePkg.IdNpbind);
+                it.Npbind = RemotePkg.GetSpecial(it.PkgUrl, RemotePkg.IdNpbind, out encBind);
             }
 
             Log.Write("补齐 " + it.TitleId + ": nptitle=" + (it.Nptitle == null ? "无" : it.Nptitle.Length + "B")
-                + " npbind=" + (it.Npbind == null ? "无" : it.Npbind.Length + "B"));
+                + " npbind=" + (it.Npbind == null ? "无" : it.Npbind.Length + "B")
+                + (encTitle || encBind ? "（加密条目）" : ""));
+
+            // 加密条目拿到的只是密文，没有密钥解不开 —— 直接说清楚，别让它走到"找不到 NPWR"那种误导人的报错
+            if (encTitle || encBind)
+            {
+                throw new Exception("这个游戏的 nptitle.dat / npbind.dat 在 app.pkg 里是加密条目"
+                    + "（flags1=0x80000000，密钥索引在 flags2 里），appmeta 目录里也没有明文版本，"
+                    + "所以远程拿不到。\r\n\r\n"
+                    + "解决办法：把这个游戏的 pkg 拖进「导入 PKG」，本地解析走的是 PS4_Tools 的解密实现，可以正常读出。");
+            }
 
             if (it.Npbind == null || it.Npbind.Length == 0)
                 throw new Exception("既没有元数据目录，也没能从 " + (it.PkgUrl ?? "(无 app.pkg)") + " 里读到 npbind.dat");
