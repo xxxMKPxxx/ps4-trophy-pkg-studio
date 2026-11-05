@@ -84,6 +84,12 @@ jobs:
             throw 'app-builds 分支取不到（先跑一次 unlocker app 构建）'
           }
 
+          # 界面字体：解锁器界面用 FreeType 画中文，读 /app0/font.ttf，打 pkg 时塞进去
+          $font = '.\unlocker-app\assets\font.ttf'
+          if (-not (Test-Path $font)) { throw '缺 unlocker-app\assets\font.ttf（界面字体）' }
+          Copy-Item $font "$out\template\font.ttf" -Force
+          Write-Host ("已放入界面字体：{0:N1} MB" -f ((Get-Item $font).Length / 1MB))
+
           Get-ChildItem "$out" -Filter *.dll | Select-Object Name, Length | Format-Table
 
       - uses: actions/upload-artifact@v4

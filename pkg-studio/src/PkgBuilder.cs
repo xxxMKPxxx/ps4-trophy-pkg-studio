@@ -118,14 +118,33 @@ namespace PkgStudio
                     Log.Write("顺序表: " + orderLocal);
                 }
 
+                // 4.7 界面字体（解锁器界面用 FreeType 画中文，读 /app0/font.ttf）
+                string fontCustom = Path.Combine(templateDir, "font.ttf");
+                bool hasFont = File.Exists(fontCustom);
+                if (hasFont)
+                {
+                    File.Copy(fontCustom, Path.Combine(target, "font.ttf"), true);
+                    Log.Write("界面字体: " + fontCustom);
+                }
+                else
+                {
+                    Log.Write("警告：template 里没有 font.ttf，解锁器界面会因为没有字体而退出");
+                }
+
                 // 4. gp4：只改 content_id
                 string xml = File.ReadAllText(gp4Src, Encoding.UTF8);
                 xml = ReplaceContentId(xml, newContentId);
 
-                if (hasOrder && xml.IndexOf("</files>", StringComparison.Ordinal) > 0)
+                if ((hasOrder || hasFont) && xml.IndexOf("</files>", StringComparison.Ordinal) > 0)
                 {
-                    xml = xml.Replace("</files>",
-                        "    <file targ_path=\"trophy_order.csv\" orig_path=\"CONTENTS\\trophy_order.csv\" />\r\n  </files>");
+                    StringBuilder extra = new StringBuilder();
+
+                    if (hasOrder)
+                        extra.Append("    <file targ_path=\"trophy_order.csv\" orig_path=\"CONTENTS\\trophy_order.csv\" />\r\n");
+                    if (hasFont)
+                        extra.Append("    <file targ_path=\"font.ttf\" orig_path=\"CONTENTS\\font.ttf\" />\r\n");
+
+                    xml = xml.Replace("</files>", extra.ToString() + "  </files>");
                 }
 
                 string gp4 = Path.Combine(work, "project.gp4");
