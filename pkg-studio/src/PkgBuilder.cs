@@ -115,8 +115,8 @@ namespace PkgStudio
                     }
 
                     File.Copy(ebootCustom, Path.Combine(target, "eboot.bin"), true);
-                    log("已替换 eboot.bin（解锁器 app）");
-                    Log.Write("使用自定义 eboot: " + ebootCustom);
+                    log("已替换 eboot.bin（解锁器 app，" + eh.Length + " 字节 SCE ELF）");
+                    Log.Write("使用自定义 eboot: " + ebootCustom + "（" + eh.Length + " 字节）");
                 }
 
                 // 4.6 解锁顺序表：输出目录里有 trophy_order_<TITLEID>.csv 就一起打进包里
