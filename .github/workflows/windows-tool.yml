@@ -1,7 +1,7 @@
 name: build windows tool
 
+# 只在手动触发时构建：补丁脚本已经稳定，不必每次 push 都跑。
 on:
-  push:
   workflow_dispatch:
 
 jobs:

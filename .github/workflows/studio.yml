@@ -12,6 +12,10 @@ jobs:
   build:
     runs-on: windows-latest
 
+    # 需要写权限：构建完成（或失败）后把结果推到 builds 分支
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,9 +37,15 @@ jobs:
       - name: 编译
         shell: pwsh
         run: |
+          # 输出同时进日志文件：构建失败时这个文件会被推到 builds 分支，方便直接看原因
           msbuild .\pkg-studio\PkgStudio.csproj `
             /p:Configuration=Release /p:Platform=AnyCPU `
-            /verbosity:minimal /nologo
+            /verbosity:minimal /nologo 2>&1 | Tee-Object -FilePath build.log
+
+          # 不看退出码，直接看产物；msbuild 有时会带着错误返回 0
+          if (-not (Test-Path '.\pkg-studio\bin\Release\PkgStudio.exe')) {
+            throw "编译失败：没有生成 PkgStudio.exe（完整日志见 builds 分支的 build.log）"
+          }
 
       - name: 组装产物
         shell: pwsh
@@ -53,6 +63,40 @@ jobs:
           Get-ChildItem "$out" -Filter *.dll | Select-Object Name, Length | Format-Table
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: PkgStudio
-          path: pkg-studio/bin/Release/**
+          path: |
+            pkg-studio/bin/Release/**
+            build.log
+
+      # 把结果提交到 builds 分支：不登录也能拿到，也方便直接从别处 git 取
+      - name: 发布到 builds 分支
+        if: always()
+        shell: pwsh
+        run: |
+          $zip = 'PkgStudio-build.zip'
+          if (Test-Path '.\pkg-studio\bin\Release\PkgStudio.exe') {
+            if (Test-Path $zip) { Remove-Item $zip -Force }
+            Compress-Archive -Path '.\pkg-studio\bin\Release\*' -DestinationPath $zip -Force
+            Write-Host ("打包完成: {0:N1} MB" -f ((Get-Item $zip).Length / 1MB))
+          }
+
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+          # 孤立分支：只放产物，不带源码历史
+          git checkout --orphan builds
+          git reset
+
+          if (Test-Path $zip)      { git add -f $zip }
+          if (Test-Path 'build.log') { git add -f build.log }
+
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host '没有可提交的产物'
+            exit 0
+          }
+
+          git commit -m "build $env:GITHUB_SHA"
+          git push -f origin HEAD:refs/heads/builds

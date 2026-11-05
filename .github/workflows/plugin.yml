@@ -1,8 +1,7 @@
 name: build prx
 
+# 只在手动触发时构建：插件代码目前没在改动，不必每次 push 都跑。
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
