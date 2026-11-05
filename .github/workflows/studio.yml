@@ -23,6 +23,9 @@ jobs:
             throw '上游 Resources 里没有 CONTENTS.zip'
           }
 
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
       - name: 编译
         shell: pwsh
         run: |
