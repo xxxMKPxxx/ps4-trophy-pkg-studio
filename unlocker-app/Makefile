@@ -17,7 +17,9 @@ TOOLCHAIN ?= $(OO_PS4_TOOLCHAIN)
 INTDIR    := build
 
 # 直接链接官方 stub（samples/trophies 就是这么链的），不再 dlsym 猜原型
-LIBS := -lc -lkernel -lSceUserService -lSceSysmodule -lSceNpTrophy
+# 界面：VideoOut 出画面，Pad 读手柄，FreeType 画中文字
+LIBS := -lc -lkernel -lSceUserService -lSceSysmodule -lSceNpTrophy \
+        -lSceVideoOut -lScePad -lSceFreeType
 
 CFLAGS := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -Wall \
           -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include
