@@ -37,12 +37,14 @@ namespace PkgStudio
                 if (!Directory.Exists(work))
                     Directory.CreateDirectory(work);
 
-                // 1) 只取单个文件（最快，成功的话添加就是毫秒级）
+                // sce_sys 里的文件（param.sfo / nptitle.dat / npbind.dat / trophy）是 pkg 条目，
+                // 完整解包时它们落在 Sc0，Image0 才是 PFS 里的游戏本体。
+                // 所以先试 Sc0，避免为了一个小文件去读整个 PFS。
                 string[] fileSels = new string[]
                 {
-                    ":Image0/sce_sys/param.sfo",
+                    ":Sc0/sce_sys/param.sfo",
                     ":sce_sys/param.sfo",
-                    ":Sc0/sce_sys/param.sfo"
+                    ":Image0/sce_sys/param.sfo"
                 };
                 sfoPath = TrySelectors(exe, tools, srcPkg, work, fileSels, "file", watch);
 
@@ -51,9 +53,9 @@ namespace PkgStudio
                 {
                     string[] dirSels = new string[]
                     {
-                        ":Image0/sce_sys",
+                        ":Sc0/sce_sys",
                         ":sce_sys",
-                        ":Sc0/sce_sys"
+                        ":Image0/sce_sys"
                     };
                     sfoPath = TrySelectors(exe, tools, srcPkg, work, dirSels, "dir", watch);
                 }
@@ -82,8 +84,6 @@ namespace PkgStudio
                 }
             }
 
-            string dir = Path.GetDirectoryName(sfoPath);
-
             GameItem it = new GameItem();
             it.Source = "PKG";
             it.Origin = pkgPath;
@@ -96,9 +96,10 @@ namespace PkgStudio
             it.AppVer = Sfo.Get(it.Param, "APP_VER");
             it.Kind = GameItem.KindOf(it.Category);
 
-            it.Nptitle = TryRead(dir, "nptitle.dat");
-            it.Npbind = TryRead(dir, "npbind.dat");
-            it.Trophy = TryReadTrophy(dir);
+            // 按文件名在全缓存里找，不假定几个文件都在同一目录（Sc0 / Image0 会分开）
+            it.Nptitle = ReadFirst(work, "nptitle.dat");
+            it.Npbind = ReadFirst(work, "npbind.dat");
+            it.Trophy = ReadFirst(work, "trophy00.trp");
 
             Log.Write("导入结果(" + watch.ElapsedMilliseconds + " ms): " + it.Title + " / " + it.TitleId
                 + " / " + it.Category
@@ -130,40 +131,73 @@ namespace PkgStudio
             if (!Directory.Exists(work))
                 Directory.CreateDirectory(work);
 
-            string sfoPath = FindFile(work, "param.sfo");
-            string dir = sfoPath == null ? null : Path.GetDirectoryName(sfoPath);
             string lastExtractOutput = null;
 
-            if (dir == null || TryRead(dir, "npbind.dat") == null || TryReadTrophy(dir) == null)
+            // 缺哪几个文件就从包里挑哪几个目录取，取到就停。绝不默认整包解压：
+            // 一个 600MB 的包整包解压要等几十秒到几分钟，而 sce_sys 只有几 MB。
+            if (!AllFilesPresent(work))
             {
                 log("补齐 " + it.TitleId + " 的缺件…");
-                Stopwatch w = Stopwatch.StartNew();
 
-                string[] dirSels = new string[] { ":Image0/sce_sys", ":sce_sys", ":Sc0/sce_sys" };
-                string got = TrySelectors(exe, tools, srcPkg, work, dirSels, "need", w);
-
-                if (got == null)
+                // Sc0 = pkg 条目（sce_sys 里的文件都在这），Image0 = PFS 本体
+                string[] dirSels = new string[]
                 {
+                    ":Sc0/sce_sys",
+                    ":Image0/sce_sys",
+                    ":sce_sys"
+                };
+
+                foreach (string sel in dirSels)
+                {
+                    if (AllFilesPresent(work))
+                        break;
+
+                    Stopwatch w = Stopwatch.StartNew();
+                    string outText = RunExtract(exe, tools, srcPkg, work, sel, "need", w);
+
+                    if (lastExtractOutput == null && FindFile(work, "param.sfo") == null)
+                        lastExtractOutput = outText;
+                }
+
+                // 还缺 trophy 的话，单独按文件再试一次（有的包里只有它单独一个条目）
+                if (ReadFirst(work, "trophy00.trp") == null)
+                {
+                    string[] trophySels = new string[]
+                    {
+                        ":Sc0/sce_sys/trophy/trophy00.trp",
+                        ":Image0/sce_sys/trophy/trophy00.trp",
+                        ":sce_sys/trophy/trophy00.trp"
+                    };
+                    Stopwatch w = Stopwatch.StartNew();
+                    foreach (string sel in trophySels)
+                    {
+                        if (ReadFirst(work, "trophy00.trp") != null)
+                            break;
+                        RunExtract(exe, tools, srcPkg, work, sel, "trp", w);
+                    }
+                }
+
+                // 前面全失败才真正整包解压（最慢，最后手段）
+                if (!AllFilesPresent(work))
+                {
+                    Log.Write("逐个目录都没凑齐，退回整包解压: " + srcPkg);
                     long need = new FileInfo(srcPkg).Length;
                     CheckSpace(work, need + 64L * 1024 * 1024);
 
-                    Log.Write("选择性解包不可用，整包解压: " + srcPkg);
                     string sub = Path.Combine(work, "full");
-                    w.Restart();
+                    Stopwatch w = Stopwatch.StartNew();
                     string outText = Orbis.Run(exe,
                         "img_extract --passcode " + Zeros + " \"" + srcPkg + "\" \"" + sub + "\"", tools);
                     Log.Write("整包解压用时 " + w.ElapsedMilliseconds + " ms，落地 " + CountFiles(sub));
                     lastExtractOutput = outText;
                 }
-
-                sfoPath = FindFile(work, "param.sfo");
-                dir = sfoPath == null ? null : Path.GetDirectoryName(sfoPath);
             }
 
-            if (dir == null)
+            string sfoPath = FindFile(work, "param.sfo");
+            if (sfoPath == null)
             {
-                throw new Exception("解包后仍然找不到 sce_sys。\r\n"
-                    + "常见原因：磁盘空间不足（整包解压需要和 pkg 一样大的空闲空间，当前缓存目录 "
+                throw new Exception("解包后仍然找不到 param.sfo。\r\n"
+                    + "常见原因：这个包不是 fpkg（零售原包没有 passcode 解不开），或磁盘空间不足（缓存目录 "
                     + work + "）。\r\n\r\n"
                     + "orbis-pub-cmd 输出：\r\n" + Trim(lastExtractOutput));
             }
@@ -171,43 +205,80 @@ namespace PkgStudio
             if (it.Param == null)
                 it.Param = File.ReadAllBytes(sfoPath);
 
-            it.Nptitle = TryRead(dir, "nptitle.dat");
-            it.Npbind = TryRead(dir, "npbind.dat");
-            it.Trophy = TryReadTrophy(dir);
+            it.Nptitle = ReadFirst(work, "nptitle.dat");
+            it.Npbind = ReadFirst(work, "npbind.dat");
+            it.Trophy = ReadFirst(work, "trophy00.trp");
 
             if (it.Npbind == null) throw new Exception("包里没有 npbind.dat");
             if (it.Nptitle == null) throw new Exception("包里没有 nptitle.dat");
-            if (it.Trophy == null) throw new Exception("包里没有 sce_sys/trophy/trophy00.trp");
+            if (it.Trophy == null) throw new Exception("包里没有 trophy00.trp（sce_sys/trophy/ 下）");
 
             log("已补齐 " + it.TitleId);
+        }
+
+        /// <summary>param.sfo / nptitle / npbind / trophy 四个是否都已经在缓存里。</summary>
+        private static bool AllFilesPresent(string work)
+        {
+            return FindFile(work, "param.sfo") != null
+                && FindFile(work, "nptitle.dat") != null
+                && FindFile(work, "npbind.dat") != null
+                && FindFile(work, "trophy00.trp") != null;
+        }
+
+        private static byte[] ReadFirst(string root, string name)
+        {
+            string p = FindFile(root, name);
+            return p != null ? File.ReadAllBytes(p) : null;
+        }
+
+        /// <summary>按 selector 选择性解出一部分内容，返回 orbis 的输出文本。</summary>
+        private static string RunExtract(string exe, string tools, string pkgPath, string work,
+                                         string selector, string tag, Stopwatch watch)
+        {
+            string sub = Path.Combine(work, tag + "_" + SafeName(selector));
+            if (!Directory.Exists(sub))
+                Directory.CreateDirectory(sub);
+
+            watch.Restart();
+            string outText;
+            try
+            {
+                outText = Orbis.Run(exe,
+                    "img_extract --passcode " + Zeros + " \"" + pkgPath + selector + "\" \"" + sub + "\"", tools);
+            }
+            catch (Exception ex)
+            {
+                Log.Write("选择性解包 " + selector + " 抛异常: " + ex.Message);
+                return ex.Message;
+            }
+
+            Log.Write("选择性解包 " + selector + " 用时 " + watch.ElapsedMilliseconds + " ms，落地 "
+                + CountFiles(sub) + " 个文件");
+
+            return outText;
+        }
+
+        private static string SafeName(string selector)
+        {
+            char[] bad = new char[] { ':', '/', '\\', '*', '?', '"', '<', '>', '|' };
+            string s = selector;
+            foreach (char c in bad)
+                s = s.Replace(c, '_');
+            return s.Trim('_');
         }
 
         private static string TrySelectors(string exe, string tools, string pkgPath, string work,
                                           string[] selectors, string tag, Stopwatch watch)
         {
-            int i = 0;
             foreach (string sel in selectors)
             {
-                i++;
-                string sub = Path.Combine(work, tag + i);
-                watch.Restart();
+                string sfo = FindFile(work, "param.sfo");
+                if (sfo != null)
+                    return sfo;
 
-                string outText = Orbis.Run(exe,
-                    "img_extract --passcode " + Zeros + " \"" + pkgPath + sel + "\" \"" + sub + "\"", tools);
-
-                int files = CountFiles(sub);
-                bool ok = FindFile(work, "param.sfo") != null;
-
-                Log.Write("选择性解包 " + sel + " 用时 " + watch.ElapsedMilliseconds + " ms，落地 " + files
-                    + " 个文件，" + (ok ? "成功" : "未拿到 param.sfo"));
-
-                if (ok)
-                    return FindFile(work, "param.sfo");
-
-                if (files == 0 && i == 1 && watch.ElapsedMilliseconds > 5000)
-                    Log.Write("首次解包偏慢（包可能在网络盘上），后续会快很多");
+                RunExtract(exe, tools, pkgPath, work, sel, tag, watch);
             }
-            return null;
+            return FindFile(work, "param.sfo");
         }
 
         private static int CountFiles(string dir)
@@ -347,22 +418,5 @@ namespace PkgStudio
             return direct.Length > 0 ? direct[0] : null;
         }
 
-        private static byte[] TryRead(string dir, string name)
-        {
-            string p = Path.Combine(dir, name);
-            return File.Exists(p) ? File.ReadAllBytes(p) : null;
-        }
-
-        private static byte[] TryReadTrophy(string dir)
-        {
-            string p = Path.Combine(dir, "trophy", "trophy00.trp");
-            if (File.Exists(p)) return File.ReadAllBytes(p);
-
-            p = Path.Combine(dir, "trophy00.trp");
-            if (File.Exists(p)) return File.ReadAllBytes(p);
-
-            string found = FindFile(dir, "trophy00.trp");
-            return found != null ? File.ReadAllBytes(found) : null;
-        }
     }
 }
