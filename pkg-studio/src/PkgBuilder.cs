@@ -129,6 +129,7 @@ namespace PkgStudio
                 else
                 {
                     Log.Write("警告：template 里没有 font.ttf，解锁器界面会因为没有字体而退出");
+                    log("警告：template 缺 font.ttf，界面起不来，请用最新版工具目录");
                 }
 
                 // 4. gp4：只改 content_id
