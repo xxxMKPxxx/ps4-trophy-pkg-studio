@@ -1,5 +1,21 @@
 # PS4 Trophy Tools
 
+## `pkg-studio/` — 新的图形界面（推荐）
+
+独立 WinForms 应用，不再往原工具的窗体里打补丁。
+
+- 左侧表格：把游戏 `pkg` **直接拖进来**（支持多选）或点「导入 PKG」，自动解包并读 `param.sfo`
+- 按 `CATEGORY` 分类：`gd` = 游戏（可打包）、`gp` = 更新、`ac` = DLC。
+  后两种会标红并注明「不可用」，因为奖杯包只能从本体生成
+- 右侧列出生成结果（文件名 / 大小 / 时间），双击定位到文件
+- 顶部可设输出目录和模板目录；「扫描 FTP」把 PS4 上的游戏以同一张表列出
+- 打包只做**等长就地替换**（`TITLE_ID` 9 字符、`CONTENT_ID` 里的同段 9 字符），
+  不重建 param.sfo 结构 —— 之前整体重写会导致 PS4 拒装（CE-34629）
+
+构建：`.github/workflows/studio.yml` 会在 `windows-latest` 上编译，并把上游的
+`TrophyUnlocker/Resources`（`CONTENTS.zip`、`.gp4`、`orbis-pub-cmd.exe`）复制到
+产物目录的 `template/` 下。下载 artifact **PkgStudio** 即开即用。
+
 两个独立的东西，解决同一件事的两条路线。
 
 ## `ps4-trophy-plugin/` — GoldHEN 插件（一个工具管所有游戏，真解锁）

@@ -1,0 +1,48 @@
+name: build studio
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'pkg-studio/**'
+      - '.github/workflows/studio.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 取上游模板资源
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/xXxTheDarkprogramerxXx/PS4_Tools.git upstream
+          if (-not (Test-Path '.\upstream\TrophyUnlocker\Resources\CONTENTS.zip')) {
+            throw '上游 Resources 里没有 CONTENTS.zip'
+          }
+
+      - name: 编译
+        shell: pwsh
+        run: |
+          msbuild .\pkg-studio\PkgStudio.csproj `
+            /p:Configuration=Release /p:Platform=AnyCPU `
+            /verbosity:minimal /nologo
+
+      - name: 组装产物
+        shell: pwsh
+        run: |
+          $out = '.\pkg-studio\bin\Release'
+          if (-not (Test-Path "$out\PkgStudio.exe")) { throw "没有生成 PkgStudio.exe" }
+
+          # 模板资源放到 exe 旁边的 template 目录，程序默认从那里读
+          New-Item -ItemType Directory -Force -Path "$out\template" | Out-Null
+          Copy-Item '.\upstream\TrophyUnlocker\Resources\*' "$out\template\" -Recurse -Force
+
+          Get-ChildItem "$out\template" | Select-Object Name, Length | Format-Table
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PkgStudio
+          path: pkg-studio/bin/Release/**
