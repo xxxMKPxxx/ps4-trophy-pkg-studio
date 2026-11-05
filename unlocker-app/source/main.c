@@ -270,16 +270,37 @@ int main(void)
     int rc = sceUserServiceInitialize(NULL);
     log_hex("sceUserServiceInitialize ", (uint32_t)rc);
 
+    /* 拿当前用户：InitialUser 拿不到就依次退到 前台的 / 已登录列表里的第一个。
+     * uid=0 是不合法的用户，拿它去 CreateContext 会直接 0x8055161c。 */
     int uid = 0;
     rc = sceUserServiceGetInitialUser(&uid);
+    log_hex("GetInitialUser ", (uint32_t)rc);
     log_int("user id ", uid);
-    if (rc != 0 || uid == 0) {
+
+    if (uid <= 0) {
+        uid = 0;
         rc = sceUserServiceGetForegroundUser(&uid);
         log_hex("GetForegroundUser ", (uint32_t)rc);
         log_int("user id ", uid);
     }
-    if (uid == 0) {
-        log_str("拿不到用户，放弃\n");
+
+    if (uid <= 0) {
+        uid = 0;
+        OrbisUserServiceLoginUserIdList list;
+        memset(&list, 0, sizeof(list));
+        rc = sceUserServiceGetLoginUserIdList(&list);
+        log_hex("GetLoginUserIdList ", (uint32_t)rc);
+        for (int i = 0; i < ORBIS_USER_SERVICE_MAX_LOGIN_USERS; i++) {
+            if (list.userId[i] > 0) {
+                uid = list.userId[i];
+                break;
+            }
+        }
+        log_int("user id ", uid);
+    }
+
+    if (uid <= 0) {
+        log_str("拿不到用户（是不是没登录/没选中用户？），放弃\n");
         hold_and_exit();
         return 1;
     }
