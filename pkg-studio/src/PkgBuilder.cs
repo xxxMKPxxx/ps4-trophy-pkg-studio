@@ -78,18 +78,18 @@ namespace PkgStudio
                 Directory.CreateDirectory(sceSys);
                 File.WriteAllBytes(Path.Combine(sceSys, "param.sfo"), sfo);
 
-                // 2. nptitle.dat：把 12 字节的 "TITLEID_00" 换成新的
-                byte[] npt = Sfo.ReplaceBytes(it.Nptitle,
-                    Encoding.UTF8.GetBytes(oldId + "_00"),
-                    Encoding.UTF8.GetBytes(newId + "_00"));
-                File.WriteAllBytes(Path.Combine(sceSys, "nptitle.dat"), npt);
-
-                // 3. npbind / trophy 原样拷贝
+                // 2. nptitle.dat / npbind.dat / trophy00.trp：**原样拷贝，绝对不能改 ID**
+                //    进程的 NP Communication ID 就是从这里来的（CUSAxxxxx_00），
+                //    奖杯也是按这个 ID 存进本地奖杯库的。改成 XDPXxxxxx_00 的话，
+                //    解锁会写到一个新的假奖杯集里，游戏里根本看不到，而且 TRP 对不上会注册失败。
+                //    唯一改的是 param.sfo 的 TITLE_ID —— 那个只决定包装进哪个"槽位"。
+                File.WriteAllBytes(Path.Combine(sceSys, "nptitle.dat"), it.Nptitle);
                 File.WriteAllBytes(Path.Combine(sceSys, "npbind.dat"), it.Npbind);
 
                 string trophyDir = Path.Combine(sceSys, "trophy");
                 Directory.CreateDirectory(trophyDir);
                 File.WriteAllBytes(Path.Combine(trophyDir, "trophy00.trp"), it.Trophy);
+                Log.Write("NP Communication ID 保持原样: " + it.TitleId + "_00（奖杯记到这个 ID 上）");
 
                 // 4.5 自定义 eboot（unlocker-app 构建的 SCE ELF，CI 自动放进 template 目录）：template 目录下有 eboot.bin 就替换掉模板自带的
                 //     （那是"启动即按顺序解锁"的独立 app，替换后 pkg 里跑的就是我们的逻辑）

@@ -62,20 +62,26 @@ jobs:
           # PS4_Tools.dll 运行时还会用到同目录的其它依赖，一并拷过去
           Copy-Item '.\PS4_Tools\TrophyUnlocker\bin\Release\*.dll' "$out\" -Force
 
-          # 取最新构建的解锁器 eboot.bin（app-builds 分支），放到 template 下，
+          # 取最新构建的解锁器 eboot（app-builds 分支），放到 template 下，
           # 打 pkg 时会自动替换模板自带的那个 eboot
+          # 要的是 eboot.oelf（SCE ELF）：img_create 只接受 ELF，
+          # 而普通 ELF / 假 SCE ELF 装进去会 CE-30045-2 / CE-41839-5
           git fetch --depth 1 origin app-builds 2>$null
           if ($LASTEXITCODE -eq 0) {
-            # 要 ELF（不是 SELF）：img_create 会自己转成 SELF，给 SELF 会直接报错
-            git checkout FETCH_HEAD -- eboot.elf 2>$null
-            if (Test-Path '.\eboot.elf') {
-              Copy-Item '.\eboot.elf' "$out\template\eboot.bin" -Force
-              Write-Host '已放入解锁器 eboot（ELF，打包时由 img_create 转 SELF）'
+            git checkout FETCH_HEAD -- eboot.oelf 2>$null
+            if (Test-Path '.\eboot.oelf') {
+              $bytes = [System.IO.File]::ReadAllBytes('.\eboot.oelf')
+              $eType = [BitConverter]::ToUInt16($bytes, 16)
+              if ($eType -ne 0xFE10) {
+                throw ("app-builds 里的 eboot.oelf 不是 SCE ELF（e_type=0x{0:X4}）" -f $eType)
+              }
+              Copy-Item '.\eboot.oelf' "$out\template\eboot.bin" -Force
+              Write-Host ("已放入解锁器 eboot：SCE ELF {0} 字节" -f $bytes.Length)
             } else {
-              Write-Host 'app-builds 里没有 eboot.elf，跳过'
+              throw 'app-builds 里没有 eboot.oelf，不能带着模板自带的 eboot 打包'
             }
           } else {
-            Write-Host 'app-builds 还没产物，先用手工/模板 eboot'
+            throw 'app-builds 分支取不到（先跑一次 unlocker app 构建）'
           }
 
           Get-ChildItem "$out" -Filter *.dll | Select-Object Name, Length | Format-Table
