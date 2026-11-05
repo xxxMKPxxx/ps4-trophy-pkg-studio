@@ -588,18 +588,9 @@ if ($needSfoTitlePatch) {
     Write-Ok '标题编码补丁已存在，跳过'
 }
 
-# --- 3.585 pkg 文件名改回纯 ASCII ---
-# 显示名放在 param.sfo 的 TITLE 里（UTF-8，XMB 正常），文件名则要经过
-# Windows 文件系统 → exFAT U 盘 → PS4 安装器。中日文文件名在最后一步可能被拒，
-# 表现就是"无法安装"却给不出原因。所以文件名一律 ASCII，并附 Title ID 保证唯一。
-$needAsciiName = ($src -match 'RemoveSpecialCharacters\(realTitle\)')
-if ($needAsciiName) {
-    $src = $src.Replace('RemoveSpecialCharacters(realTitle)',
-                        'TitleIdUtil.SafePkgName(realTitle, sfo.TitleID)')
-    Write-Ok 'pkg 文件名改为纯 ASCII（标题 + TitleID）'
-} else {
-    Write-Ok 'pkg 文件名已是 ASCII 方案，跳过'
-}
+# --- 3.585（已停用）pkg 文件名保持原样 ---
+# 曾经把文件名改成纯 ASCII，实测非 ASCII 文件名在 PS4 上安装正常，
+# 既然没必要就不引入额外变量。`TitleIdUtil.SafePkgName` 保留备用。
 
 # --- 3.59 CONTENT_ID 自检 ---
 # PS4 装不上 pkg 最常见的原因之一：CONTENT_ID 的中间段和 TITLE_ID 不一致。
@@ -786,7 +777,7 @@ if ($ReferenceDir) {
 }
 
 # ---------- 5. 备份并写回 ----------
-if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch -or $needUiPatch -or $needSfoTitlePatch -or $needCidCheck -or $needAsciiName) {
+if ($needTitlePatch -or $needNamePatch -or $needFtpPortPatch -or $needFtpListPatch -or $needDownloadPatch -or $needSkipLogPatch -or $needLogPatch -or $needLogMethod -or $needDoWorkPatch -or $needUiPatch -or $needSfoTitlePatch -or $needCidCheck) {
     $bak = "$form.bak"
     if (-not (Test-Path $bak)) {
         Copy-Item $form $bak

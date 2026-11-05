@@ -185,7 +185,7 @@ $checks = @(
   @{ N='标题按 UTF-8 重写';          Pass = ($p -match 'SfoUtil\.SetString\(') },
   @{ N='CONTENT_ID 自检已插入';      Pass = ($p -match '补丁：CONTENT_ID 自检' -and $p -match 'seg\[1\]\.Replace') },
   @{ N='pkg 产出检查已插入';         Pass = ($p -match 'pkg 未生成，orbis-pub-cmd 可能失败') },
-  @{ N='pkg 文件名用 ASCII';        Pass = ($p -match 'TitleIdUtil\.SafePkgName\(realTitle, sfo\.TitleID\)' -and $p -notmatch 'RemoveSpecialCharacters\(sfo\.Title\)') },
+  @{ N='文件名保持原样';            Pass = ($p -match 'RemoveSpecialCharacters\(realTitle\)' -and $p -notmatch 'RemoveSpecialCharacters\(sfo\.Title\)') },
   @{ N='newpkgid 硬编码已移除';      Pass = ($p -notmatch '"XDPX30000_00"') },
   @{ N='大括号仍平衡';               Pass = ((([regex]::Matches($p,'\{')).Count) -eq (([regex]::Matches($p,'\}')).Count)) }
 )
