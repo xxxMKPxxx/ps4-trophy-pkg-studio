@@ -34,6 +34,11 @@
       <HintPath>..\PS4_Tools\TrophyUnlocker\bin\Release\PS4_Tools.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <!-- PS4_Tools 的 Param 属性类型是 PARAM_SFO，定义在这个程序集里，缺了就 CS0012 -->
+    <Reference Include="PARAM.SFO">
+      <HintPath>..\PS4_Tools\TrophyUnlocker\bin\Release\PARAM.SFO.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="src\Program.cs" />

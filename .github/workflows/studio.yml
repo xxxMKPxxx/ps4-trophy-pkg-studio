@@ -47,7 +47,10 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$out\template" | Out-Null
           Copy-Item '.\PS4_Tools\TrophyUnlocker\Resources\*' "$out\template\" -Recurse -Force
 
-          Get-ChildItem "$out\template" | Select-Object Name, Length | Format-Table
+          # PS4_Tools.dll 运行时还会用到同目录的其它依赖，一并拷过去
+          Copy-Item '.\PS4_Tools\TrophyUnlocker\bin\Release\*.dll' "$out\" -Force
+
+          Get-ChildItem "$out" -Filter *.dll | Select-Object Name, Length | Format-Table
 
       - uses: actions/upload-artifact@v4
         with:
