@@ -309,13 +309,13 @@ namespace PkgStudio
 
                 try
                 {
-                    // 先走 PS4_Tools 的快速读取（和原版一样，秒级）
+                    // 和原版一样：Read_PKG 直接把四个文件从条目表里读出来，不解包
                     bool fast = await Task.Run(() => PkgFast.Fill(quick));
 
-                    if (!fast)
+                    // 只有连条目都拿不到时才退回 orbis（正常情况下永远走不到这里）
+                    if (!fast || !quick.FilesLoaded)
                     {
-                        // 退回：orbis-pub-cmd 解包（慢，但至少能用）
-                        Log.Write("改用 orbis-pub-cmd 解包: " + p);
+                        Log.Write("条目直读不完整，改用 orbis-pub-cmd 解包: " + p);
                         string path = p;
                         GameItem full = await Task.Run(() => PkgReader.FromPkg(path, TemplateDir, workRoot));
 
