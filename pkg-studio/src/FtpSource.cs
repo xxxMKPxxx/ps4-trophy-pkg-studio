@@ -126,6 +126,7 @@ namespace PkgStudio
             // 而 appmeta 只是汇总目录，个别游戏在那里没有条目 —— 这就是"列表不全"的来源。
             int before = list.Count;
             List<string> appTids = new List<string>();
+            Dictionary<string, string> appPkg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> appSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (string d in AppDirs)
@@ -150,6 +151,7 @@ namespace PkgStudio
                     if (appSeen.Add(n))
                     {
                         appTids.Add(n);
+                        appPkg[n] = url + n + "/app.pkg";   // 游戏本体，元数据缺失时直接读它
                         added++;
                     }
                 }
@@ -174,20 +176,36 @@ namespace PkgStudio
                     try
                     {
                         string meta = FindMeta(root, tid);
-                        if (meta == null)
+                        byte[] param = null;
+                        string pkgUrl;
+                        appPkg.TryGetValue(tid, out pkgUrl);
+
+                        if (meta != null)
+                            param = Download(meta + "param.sfo");
+
+                        // 元数据目录里没有，就直接读那个 app.pkg 的包头和条目表（只几十 KB）
+                        if (param == null || param.Length == 0)
                         {
-                            Log.Write("补不上 " + tid + "：appmeta / 各盘 appmeta / app 下的 sce_sys 都没有 param.sfo");
-                            return;
+                            if (pkgUrl == null)
+                            {
+                                Log.Write("补不上 " + tid + "：无处可读");
+                                return;
+                            }
+
+                            Log.Write("元数据缺失，改从 app.pkg 直读: " + pkgUrl);
+                            param = RemotePkg.GetParam(pkgUrl);
+                            if (param != null && param.Length > 0)
+                                meta = null;     // 其他文件也走远程读
                         }
 
-                        byte[] param = Download(meta + "param.sfo");
                         if (param == null || param.Length == 0)
                             return;
 
                         GameItem it = new GameItem();
                         it.Source = "FTP";
-                        it.Origin = meta;            // 元数据目录，打包时从这里取 nptitle/npbind
+                        it.Origin = meta;            // 有元数据目录就用它，否则打包时走远程读
                         it.RootUrl = root;
+                        it.PkgUrl = pkgUrl;
                         it.Param = param;
                         it.Title = Sfo.Get(param, "TITLE");
                         it.TitleId = Sfo.Get(param, "TITLE_ID");
@@ -228,18 +246,39 @@ namespace PkgStudio
             if (it.FilesLoaded)
                 return;
 
-            string url = it.Origin.EndsWith("/") ? it.Origin : it.Origin + "/";
+            string url = string.IsNullOrEmpty(it.Origin)
+                ? null
+                : (it.Origin.EndsWith("/") ? it.Origin : it.Origin + "/");
 
-            it.Nptitle = Download(url + "nptitle.dat");
-            it.Npbind = Download(url + "npbind.dat");
+            // appmeta 里可能只有 param.sfo，另外三个文件要靠 app.pkg —— 先把地址找出来
+            if (string.IsNullOrEmpty(it.PkgUrl) && !string.IsNullOrEmpty(it.RootUrl))
+                it.PkgUrl = FindPkgUrl(it.RootUrl, it.TitleId);
+
+            if (url != null)
+            {
+                it.Nptitle = Download(url + "nptitle.dat");
+                it.Npbind = Download(url + "npbind.dat");
+            }
+
+            // 元数据目录里没有 → 直接从那个 app.pkg 里读（只读包头和条目表，几十 KB）
+            if ((it.Nptitle == null || it.Nptitle.Length == 0) && !string.IsNullOrEmpty(it.PkgUrl))
+            {
+                Log.Write("元数据目录没有 nptitle.dat，改从 app.pkg 读");
+                it.Nptitle = RemotePkg.GetSpecial(it.PkgUrl, RemotePkg.IdNptitle);
+            }
+            if ((it.Npbind == null || it.Npbind.Length == 0) && !string.IsNullOrEmpty(it.PkgUrl))
+            {
+                Log.Write("元数据目录没有 npbind.dat，改从 app.pkg 读");
+                it.Npbind = RemotePkg.GetSpecial(it.PkgUrl, RemotePkg.IdNpbind);
+            }
 
             Log.Write("补齐 " + it.TitleId + ": nptitle=" + (it.Nptitle == null ? "无" : it.Nptitle.Length + "B")
                 + " npbind=" + (it.Npbind == null ? "无" : it.Npbind.Length + "B"));
 
             if (it.Npbind == null || it.Npbind.Length == 0)
-                throw new Exception("远端 " + url + " 下没有 npbind.dat（这个游戏可能没装奖杯数据）");
+                throw new Exception("既没有元数据目录，也没能从 " + (it.PkgUrl ?? "(无 app.pkg)") + " 里读到 npbind.dat");
             if (it.Nptitle == null || it.Nptitle.Length == 0)
-                throw new Exception("远端 " + url + " 下没有 nptitle.dat");
+                throw new Exception("既没有元数据目录，也没能从 " + (it.PkgUrl ?? "(无 app.pkg)") + " 里读到 nptitle.dat");
 
             string npwr = FindNpwr(it.Npbind);
             if (npwr == null)
@@ -264,9 +303,16 @@ namespace PkgStudio
                 }
             }
 
+            // 最后一条路：直接从 app.pkg 里取 trophy00.trp
+            if ((it.Trophy == null || it.Trophy.Length == 0) && !string.IsNullOrEmpty(it.PkgUrl))
+            {
+                Log.Write("奖杯目录取不到，改从 app.pkg 读 trophy00.trp");
+                it.Trophy = RemotePkg.GetByName(it.PkgUrl, "trophy00.trp");
+            }
+
             if (it.Trophy == null || it.Trophy.Length == 0)
                 throw new Exception("TROPHY.TRP 取不到，试过 " + string.Join(" 和 ", ids)
-                    + "（远端 " + root + "user/trophy/conf/）");
+                    + "（远端 " + root + "user/trophy/conf/），也没能从 app.pkg 里读到");
 
             log("已补齐 " + it.TitleId + " 的奖杯文件 (" + npwr + ")");
         }
@@ -292,6 +338,56 @@ namespace PkgStudio
                 return Encoding.ASCII.GetString(data, i, 9);
             }
             return null;
+        }
+
+        /// <summary>在各盘找这个 Title ID 的 app.pkg，返回第一个存在的地址。</summary>
+        private static string FindPkgUrl(string root, string tid)
+        {
+            if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(tid))
+                return null;
+
+            string[] bases = new string[]
+            {
+                "user/app/",
+                "mnt/ext0/user/app/",
+                "mnt/ext1/user/app/",
+                "mnt/usb0/user/app/",
+                "mnt/usb1/user/app/"
+            };
+
+            foreach (string b in bases)
+            {
+                string u = root + b + tid + "/app.pkg";
+                if (ProbeSize(u) > 0)
+                {
+                    Log.Write("找到 app.pkg: " + u);
+                    return u;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>FTP SIZE，失败返回 -1。</summary>
+        private static long ProbeSize(string url)
+        {
+            try
+            {
+                FtpWebRequest req = (FtpWebRequest)WebRequest.Create(url);
+                req.Credentials = new NetworkCredential("anonymous", "anonymous@");
+                req.Method = WebRequestMethods.Ftp.GetFileSize;
+                req.UsePassive = true;
+                req.UseBinary = true;
+                req.KeepAlive = false;
+                req.Timeout = TimeoutMs;
+                req.ReadWriteTimeout = TimeoutMs;
+
+                using (FtpWebResponse resp = (FtpWebResponse)req.GetResponse())
+                    return resp.ContentLength;
+            }
+            catch
+            {
+                return -1;
+            }
         }
 
         /// <summary>目录名像不像 Title ID：CUSA04893 / PPSA01234，9 位，前 4 字母后 5 数字。系统应用 NPXS 排除。</summary>

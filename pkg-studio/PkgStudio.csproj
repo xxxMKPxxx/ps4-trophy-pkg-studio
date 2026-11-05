@@ -48,6 +48,7 @@
     <Compile Include="src\PkgReader.cs" />
     <Compile Include="src\PathHelper.cs" />
     <Compile Include="src\FtpSource.cs" />
+    <Compile Include="src\RemotePkg.cs" />
     <Compile Include="src\PkgBuilder.cs" />
     <Compile Include="src\Log.cs" />
     <Compile Include="src\Orbis.cs" />
