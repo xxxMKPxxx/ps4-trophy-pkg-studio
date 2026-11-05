@@ -114,9 +114,13 @@ namespace PkgStudio
                         Log.Write("警告：template/eboot.bin 不是 SCE ELF（e_type 应为 0xFE10）");
                     }
 
+                    string hash;
+                    using (var sha = System.Security.Cryptography.SHA1.Create())
+                        hash = BitConverter.ToString(sha.ComputeHash(eh)).Replace("-", "").Substring(0, 8);
+
                     File.Copy(ebootCustom, Path.Combine(target, "eboot.bin"), true);
-                    log("已替换 eboot.bin（解锁器 app，" + eh.Length + " 字节 SCE ELF）");
-                    Log.Write("使用自定义 eboot: " + ebootCustom + "（" + eh.Length + " 字节）");
+                    log("已替换 eboot.bin（解锁器 app，" + eh.Length + " 字节 SCE ELF，sha1 " + hash + "）");
+                    Log.Write("使用自定义 eboot: " + ebootCustom + "（" + eh.Length + " 字节, sha1 " + hash + "）");
                 }
 
                 // 4.6 解锁顺序表：输出目录里有 trophy_order_<TITLEID>.csv 就一起打进包里
