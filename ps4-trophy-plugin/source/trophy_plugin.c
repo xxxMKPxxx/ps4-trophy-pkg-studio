@@ -317,15 +317,20 @@ static void unlock_all(int count)
     if (n <= 0) {
         /* 没加入顺序 → 保持原来的逻辑：按奖杯 ID 顺序全解，没有延迟 */
         debug_printf("unlock all: 无顺序文件，按默认顺序 0..%d\n", count - 1);
-        for (int i = 0; i < count && g_run; i++) {
-            char nm[128] = "";
-            int un = 0;
-            if (trophy_info(i, nm, sizeof(nm), &un) == 0 && un) {
-                skipped++;
-                continue;
+        /* 0 号是白金，提前解锁会出错：先 1..count-1，最后才 0 */
+        for (int pass = 0; pass < 2 && g_run; pass++) {
+            int from = (pass == 0) ? 1 : 0;
+            int to = (pass == 0) ? count : 1;
+            for (int id = from; id < to && g_run; id++) {
+                char nm[128] = "";
+                int un = 0;
+                if (trophy_info(id, nm, sizeof(nm), &un) == 0 && un) {
+                    skipped++;
+                    continue;
+                }
+                if (unlock_one(id) == 0)
+                    ok++;
             }
-            if (unlock_one(i) == 0)
-                ok++;
         }
         debug_printf("unlock all(default): ok=%d skipped=%d total=%d run=%d\n",
                      ok, skipped, count, g_run);

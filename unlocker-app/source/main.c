@@ -304,35 +304,59 @@ int main(void)
     int n = load_order(ids, delays, MAX_ORDER);
     int ok = 0, skipped = 0;
 
-    if (n <= 0) {
-        for (int id = 0; id < count; id++) {
-            if (is_unlocked(id)) {
-                skipped++;
-                continue;
+    if (n > 0) {
+        /* 0 号是白金，提前解锁会出错：不管表里怎么写，一律挪到最末尾 */
+        int pos = -1;
+        for (int i = 0; i < n; i++) {
+            if (ids[i] == 0) {
+                pos = i;
+                break;
             }
-            int plat = -1;
-            if (p_UnlockTrophy(g_ctx, g_hdl, id, &plat) == 0)
-                ok++;
+        }
+        if (pos >= 0) {
+            int d = delays[pos];
+            for (int i = pos; i < n - 1; i++) {
+                ids[i] = ids[i + 1];
+                delays[i] = delays[i + 1];
+            }
+            ids[n - 1] = 0;
+            delays[n - 1] = d;
+            log_str("order: 0 号（白金）已挪到最后\n");
         }
     } else {
-        for (int i = 0; i < n; i++) {
-            int id = ids[i];
-            if (id >= count)
-                continue;
-
-            if (is_unlocked(id)) {
-                skipped++;
-                continue;
-            }
-
-            int plat = -1;
-            if (p_UnlockTrophy(g_ctx, g_hdl, id, &plat) == 0)
-                ok++;
-            else
-                log_int("unlock failed id ", id);
-
-            sceKernelUsleep((unsigned int)delays[i] * 1000u);
+        /* 没有顺序表：先 1..count-1，最后才是 0 号白金 */
+        n = 0;
+        for (int id = 1; id < count && n < MAX_ORDER; id++) {
+            ids[n] = id;
+            delays[n] = 0;
+            n++;
         }
+        if (n < MAX_ORDER) {
+            ids[n] = 0;
+            delays[n] = 0;
+            n++;
+        }
+        log_str("order: 用默认顺序（0 号白金放最后）\n");
+    }
+
+    for (int i = 0; i < n; i++) {
+        int id = ids[i];
+        if (id >= count)
+            continue;
+
+        if (is_unlocked(id)) {
+            skipped++;
+            continue;
+        }
+
+        int plat = -1;
+        if (p_UnlockTrophy(g_ctx, g_hdl, id, &plat) == 0)
+            ok++;
+        else
+            log_int("unlock failed id ", id);
+
+        if (delays[i] > 0)
+            sceKernelUsleep((unsigned int)delays[i] * 1000u);
     }
 
     log_int("done: unlocked ", ok);
