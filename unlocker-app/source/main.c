@@ -6,7 +6,7 @@
  * 不依赖 GoldHEN 插件、不需要手柄交互 —— 启动就按顺序解锁，跑完自己退出。
  *
  * 顺序表：/app0/trophy_order.csv（打包时塞进包里）
- *   一行一个：奖杯ID,延迟毫秒    # 注释
+ *   一行一个：奖杯ID,延迟秒    # 注释
  *   没有这个文件 → 按奖杯 ID 0..N-1 顺序解锁，无延迟
  * 断点续解：已经解锁的跳过，所以再启动一次会从剩下的继续。
  *
@@ -34,7 +34,7 @@
 #define ORDER_PATH2 "/app0/sce_sys/trophy_order.csv"
 #define MAX_TROPHIES 512
 #define MAX_ORDER 512
-#define DEFAULT_DELAY_MS 1500
+#define DEFAULT_DELAY_SEC 1
 #define FAIL_HOLD_SEC 15
 
 static int32_t g_ctx = -1;
@@ -177,7 +177,7 @@ static int load_order(int *ids, int *delays, int max)
             continue;
 
         int id = atoi_simple(s);
-        int delay = DEFAULT_DELAY_MS;
+        int delay = DEFAULT_DELAY_SEC;   /* 单位：秒 */
 
         char *comma = strchr(s, ',');
         if (comma)
@@ -187,8 +187,8 @@ static int load_order(int *ids, int *delays, int max)
             continue;
         if (delay < 0)
             delay = 0;
-        if (delay > 60000)
-            delay = 60000;
+        if (delay > 600)                 /* 最多 10 分钟，防止手滑写成 999999 */
+            delay = 600;
 
         ids[n] = id;
         delays[n] = delay;
@@ -409,7 +409,7 @@ int main(void)
         }
 
         if (delays[i] > 0)
-            sceKernelUsleep((unsigned int)delays[i] * 1000u);
+            sceKernelUsleep((unsigned int)delays[i] * 1000000u);   /* 秒 → 微秒 */
     }
 
     log_int("done: unlocked ", ok);
