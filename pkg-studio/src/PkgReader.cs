@@ -59,6 +59,7 @@ namespace PkgStudio
                 if (sfoPath == null)
                 {
                     Log.Write("选择性解包不可用，退回整包解压（" + (fi.Length / 1024 / 1024) + " MB，会很慢）");
+                    CheckSpace(work, fi.Length + 64L * 1024 * 1024);
                     watch.Restart();
 
                     string sub = Path.Combine(work, "full");
@@ -127,6 +128,7 @@ namespace PkgStudio
 
             string sfoPath = FindFile(work, "param.sfo");
             string dir = sfoPath == null ? null : Path.GetDirectoryName(sfoPath);
+            string lastExtractOutput = null;
 
             if (dir == null || TryRead(dir, "npbind.dat") == null || TryReadTrophy(dir) == null)
             {
@@ -138,9 +140,16 @@ namespace PkgStudio
 
                 if (got == null)
                 {
-                    Log.Write("补齐失败，整包解压: " + it.Origin);
+                    long need = new FileInfo(it.Origin).Length;
+                    CheckSpace(work, need + 64L * 1024 * 1024);
+
+                    Log.Write("选择性解包不可用，整包解压: " + it.Origin);
                     string sub = Path.Combine(work, "full");
-                    Orbis.Run(exe, "img_extract --passcode " + Zeros + " \"" + it.Origin + "\" \"" + sub + "\"", tools);
+                    w.Restart();
+                    string outText = Orbis.Run(exe,
+                        "img_extract --passcode " + Zeros + " \"" + it.Origin + "\" \"" + sub + "\"", tools);
+                    Log.Write("整包解压用时 " + w.ElapsedMilliseconds + " ms，落地 " + CountFiles(sub));
+                    lastExtractOutput = outText;
                 }
 
                 sfoPath = FindFile(work, "param.sfo");
@@ -148,7 +157,12 @@ namespace PkgStudio
             }
 
             if (dir == null)
-                throw new Exception("缓存里找不到 sce_sys，请重新导入");
+            {
+                throw new Exception("解包后仍然找不到 sce_sys。\r\n"
+                    + "常见原因：磁盘空间不足（整包解压需要和 pkg 一样大的空闲空间，当前缓存目录 "
+                    + work + "）。\r\n\r\n"
+                    + "orbis-pub-cmd 输出：\r\n" + Trim(lastExtractOutput));
+            }
 
             if (it.Param == null)
                 it.Param = File.ReadAllBytes(sfoPath);
@@ -222,6 +236,36 @@ namespace PkgStudio
         {
             if (string.IsNullOrEmpty(s)) return "(无输出)";
             return s.Length > 1200 ? s.Substring(0, 1200) : s;
+        }
+
+        /// <summary>整包解压前先看空间，否则 orbis 只会默默失败。</summary>
+        private static void CheckSpace(string dir, long needBytes)
+        {
+            try
+            {
+                string root = Path.GetPathRoot(Path.GetFullPath(dir));
+                if (string.IsNullOrEmpty(root))
+                    return;
+
+                DriveInfo di = new DriveInfo(root);
+                long free = di.AvailableFreeSpace;
+
+                Log.Write("缓存盘 " + root + " 可用 " + (free / 1024 / 1024) + " MB，需要约 "
+                    + (needBytes / 1024 / 1024) + " MB");
+
+                if (free < needBytes)
+                {
+                    throw new Exception("磁盘空间不足：整包解压需要约 "
+                        + (needBytes / 1024 / 1024) + " MB，缓存盘 " + root + " 只剩 "
+                        + (free / 1024 / 1024) + " MB。\r\n"
+                        + "清理空间，或把系统临时目录改到大一点的盘再试。");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (ex.Message.StartsWith("磁盘空间不足"))
+                    throw;
+            }
         }
 
         public static string Orb(string exe, string args, string workDir)
