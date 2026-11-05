@@ -96,7 +96,15 @@ artifact **TrophyUnlocker**（整个 `bin\Release` 目录，含运行时依赖 D
    同时把 `gamelist.Single(...)` 换成 `FirstOrDefault(...)`，避免同名游戏直接抛异常
 7. **应用标题按 UTF-8 写** —— `PARAM_SFO.SaveSFO()` 用系统 ANSI 代码页写字符串，
    `Unlocker for 龍が如く` 这类标题在 XMB 和 pkg 文件名里都是乱码。
-   `SfoUtil.cs` 直接按 SFO 二进制结构重写 `TITLE`，写完回读校验，失败则保留原文件
+   `SfoUtil.cs` 直接按 SFO 二进制结构重写 `TITLE`，写完回读校验，失败则保留原文件。
+   **注意：实测重写会让 PS4 拒装（CE-34629），所以默认关闭**，
+   需要在 exe 同目录 `unlocker.ini` 写 `sfofix=1` 才启用
+8. **手动添加游戏** —— 原程序有手动模式（`pnlManual`），但入口取决于
+   `Properties.Settings.Default.AppType`，默认 FTP 所以看不到。
+   现在加了两组快捷键：`Ctrl+M` 选一个文件夹，一次读入
+   `param.sfo` / `nptitle.dat` / `npbind.dat` / `trophy00.trp` 并加入列表；
+   `Ctrl+1 / 2 / 3` 切换 FTP / 手动 / PKG 三个面板。
+   目录结构随意：四个文件在根目录、`sce_sys/`、或 `sce_sys/trophy/` 下都能找到
 
 ## 注意
 

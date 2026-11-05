@@ -87,7 +87,7 @@ if (-not (Test-Path $utilSrc)){ throw "找不到 $utilSrc，请把 TitleIdUtil.c
 
 # ---------- 1. 拷工具类 ----------
 Write-Step '安装工具类'
-$utilFiles = @('TitleIdUtil.cs', 'SfoUtil.cs')
+$utilFiles = @('TitleIdUtil.cs', 'SfoUtil.cs', 'GameFile.cs')
 foreach ($name in $utilFiles) {
     $s = Join-Path $PSScriptRoot $name
     if (-not (Test-Path $s)) { throw "找不到 $s，请把补丁包里的 .cs 和本脚本放在同一目录" }
@@ -672,6 +672,144 @@ if ($needCidCheck) {
     Write-Ok '已加入 CONTENT_ID 自检与 pkg 产出检查'
 } else {
     Write-Ok 'CONTENT_ID 自检已存在，跳过'
+}
+
+# --- 3.60 手动添加游戏（一键读四件套）---
+# 原程序本来有手动模式（pnlManual + btnParam/btnTrophy/btnNptitle/btnNpBind），
+# 但面板显不显示取决于 Properties.Settings.Default.AppType，默认是 FTP，
+# 所以很多人根本看不到那个入口；而且要点四次文件对话框，很麻烦。
+# 这里加：Ctrl+M 选一个文件夹，一次性读入 param.sfo / nptitle.dat /
+# npbind.dat / trophy00.trp，加进列表并选中，接着按原有的"生成 PKG"即可。
+# Ctrl+1/2/3 切换 FTP / 手动 / PKG 三个面板。
+$needManualAdd = ($src -notmatch '补丁：Ctrl\+M')
+if ($needManualAdd) {
+    $newLoad = @'
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            switch (Properties.Settings.Default.AppType)
+            {
+                case "FTP":
+                    pnlFTP.Visible = true;
+                    break;
+                case "Manual":
+                    pnlManual.Visible = true;
+                    break;
+                case "PKG":
+                    pnlPKG.Visible = true;
+                    break;
+                default:
+                    pnlFTP.Visible = true;
+                    break;
+            }
+
+            // 补丁：Ctrl+M 从文件夹添加游戏；Ctrl+1/2/3 切换面板
+            this.KeyPreview = true;
+            this.KeyDown += Patched_KeyDown;
+            LogLine("快捷键：Ctrl+M 添加游戏，Ctrl+1/2/3 切换 FTP/手动/PKG 面板");
+        }
+
+        private void Patched_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (!e.Control)
+                return;
+
+            if (e.KeyCode == Keys.M)
+            {
+                AddGameFromFolder();
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.D1)
+            {
+                ShowPanel(0);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.D2)
+            {
+                ShowPanel(1);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.D3)
+            {
+                ShowPanel(2);
+                e.Handled = true;
+            }
+        }
+
+        private void ShowPanel(int which)
+        {
+            pnlFTP.Visible = (which == 0);
+            pnlManual.Visible = (which == 1);
+            pnlPKG.Visible = (which == 2);
+        }
+
+        // 选一个文件夹，把 param.sfo / nptitle.dat / npbind.dat / trophy00.trp 一次读进来。
+        // 目录结构随意：这四个文件在文件夹里、或在 sce_sys 子目录里都能找到。
+        public void AddGameFromFolder()
+        {
+            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+            {
+                dlg.Description = "选择一个包含 param.sfo / nptitle.dat / npbind.dat / trophy00.trp 的文件夹";
+                if (dlg.ShowDialog() != DialogResult.OK)
+                    return;
+
+                string dir = dlg.SelectedPath;
+
+                try
+                {
+                    string pParam = GameFile.Find(dir, "param.sfo");
+                    string pNptitle = GameFile.Find(dir, "nptitle.dat");
+                    string pNpbind = GameFile.Find(dir, "npbind.dat");
+                    string pTrophy = GameFile.Find(dir, "trophy00.trp");
+                    if (pTrophy == null) pTrophy = GameFile.Find(dir, "trophy.trp");
+                    if (pTrophy == null) pTrophy = GameFile.Find(dir, "TROPHY.TRP");
+
+                    if (pParam == null) throw new Exception("文件夹里找不到 param.sfo");
+                    if (pNptitle == null) throw new Exception("文件夹里找不到 nptitle.dat");
+                    if (pNpbind == null) throw new Exception("文件夹里找不到 npbind.dat");
+                    if (pTrophy == null) throw new Exception("文件夹里找不到 trophy00.trp / trophy.trp / TROPHY.TRP");
+
+                    byte[] param = File.ReadAllBytes(pParam);
+                    var sfo = PS4_Tools.PKG.SceneRelated.PARAM_SFO.Get_Param_SFO(param);
+                    if (string.IsNullOrEmpty(sfo.TitleID))
+                        throw new Exception("param.sfo 里没有 TITLE_ID");
+
+                    GameInfo info = new GameInfo();
+                    info.param = param;
+                    info.TrophyFile = File.ReadAllBytes(pTrophy);
+                    info.nptitle = File.ReadAllBytes(pNptitle);
+                    info.npbind = File.ReadAllBytes(pNpbind);
+                    info.Title = sfo.Title;
+                    info.TitleId = sfo.TitleID;
+                    info.ContentID = sfo.ContentID;
+
+                    gamelist.Add(info);
+
+                    if (!comboBox1.Items.Contains(info.Title))
+                        comboBox1.Items.Add(info.Title);
+                    comboBox1.SelectedItem = info.Title;
+
+                    LogLine("手动添加: " + info.Title + "  " + info.TitleId + "  来源 " + dir);
+                    MessageBox.Show("已添加：" + info.Title + "\r\nTitle ID：" + info.TitleId
+                        + "\r\n\r\n现在点生成 PKG 即可。", "添加游戏");
+                }
+                catch (Exception ex)
+                {
+                    LogLine("手动添加失败: " + ex.Message);
+                    MessageBox.Show("添加失败：" + ex.Message, "添加游戏");
+                }
+            }
+        }
+'@
+    try {
+        $src = Replace-CSharpMethod -Source $src `
+            -Signature 'private void Form1_Load(object sender, EventArgs e)' `
+            -NewText $newLoad
+        Write-Ok '已加入 Ctrl+M 手动添加游戏'
+    } catch {
+        Write-Warn2 "手动添加补丁跳过：$($_.Exception.Message)"
+    }
+} else {
+    Write-Ok '手动添加快捷键已存在，跳过'
 }
 
 # --- 3.6 让"跳过"可见 ---

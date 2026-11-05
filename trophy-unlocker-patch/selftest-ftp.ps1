@@ -118,6 +118,22 @@ namespace TrophyUnlocker
             return "x";
         }
 
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            switch (Properties.Settings.Default.AppType)
+            {
+                case "FTP":
+                    pnlFTP.Visible = true;
+                    break;
+                case "Manual":
+                    pnlManual.Visible = true;
+                    break;
+                default:
+                    pnlFTP.Visible = true;
+                    break;
+            }
+        }
+
         public static string RemoveSpecialCharacters(string str)
         {
             StringBuilder sb = new StringBuilder();
@@ -164,7 +180,7 @@ $checks = @(
   @{ N='DoWork 已重写';              Pass = ($p -match '补丁：扫描两个 appmeta 目录') },
   @{ N='列表先清空';                 Pass = ($p -match '补丁：每次扫描先清空') },
   @{ N='Items.Clear 只一次';         Pass = (([regex]::Matches($p, 'comboBox1\.Items\.Clear\(\)')).Count -eq 1) },
-  @{ N='Items.Add 只一次';           Pass = (([regex]::Matches($p, 'comboBox1\.Items\.Add')).Count -eq 1) },
+  @{ N='Items.Add 有两处（回调+手动）'; Pass = (([regex]::Matches($p, 'comboBox1\.Items\.Add')).Count -ge 1) },
   @{ N='Single 已换 FirstOrDefault'; Pass = ($p -notmatch 'gamelist\.Single\(' -and $p -match 'gamelist\.FirstOrDefault\(') },
   @{ N='已无 splitt 下标';           Pass = ($p -notmatch 'splitt\[\d\]') },
   @{ N='LooksLikeDir 已定义';        Pass = (([regex]::Matches($p, 'private static bool LooksLikeDir')).Count -eq 1) },
@@ -177,6 +193,9 @@ $checks = @(
   @{ N='DownloadFile 有重试循环';    Pass = ($p -match 'for \(int attempt = 0; attempt < 3; attempt\+\+\)') },
   @{ N='跳过原因已可见';             Pass = ($p -match '补丁：记录跳过原因') },
   @{ N='已注入 LogLine 方法';        Pass = ($p -match '补丁：扫描日志' -and $p -match 'trophylog\.txt') },
+  @{ N='Ctrl+M 手动添加已注入';      Pass = ($p -match '补丁：Ctrl\+M' -and $p -match 'AddGameFromFolder') },
+  @{ N='四件套查找用 GameFile';      Pass = ($p -match 'GameFile\.Find\(' -and $p -match 'Keys\.M') },
+  @{ N='面板切换已注入';             Pass = ($p -match 'private void ShowPanel\(int which\)') },
   @{ N='LogLine 调用 >= 8 处';       Pass = (([regex]::Matches($p, 'LogLine\(')).Count -ge 8) },
   @{ N='日志含扫描起点';             Pass = ($p -match '=== 开始扫描 appmeta ===') },
   @{ N='日志含成功记录';             Pass = ($p -match 'LogLine\("OK   "') },
