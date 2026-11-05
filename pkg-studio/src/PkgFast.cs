@@ -16,6 +16,7 @@ namespace PkgStudio
         private const string NAME_NPTITLE = "NPTITLE_DAT";
         private const string NAME_NPBIND = "NPBIND_DAT";
         private const string NAME_TROPHY = "TROPHY__TROPHY00_TRP";
+        private const string NAME_ICON0 = "ICON0_PNG";
 
         public static bool Fill(GameItem it)
         {
@@ -42,6 +43,7 @@ namespace PkgStudio
                             case NAME_NPTITLE: it.Nptitle = entry.file_data; break;
                             case NAME_NPBIND: it.Npbind = entry.file_data; break;
                             case NAME_TROPHY: it.Trophy = entry.file_data; break;
+                            case NAME_ICON0: it.Icon0 = entry.file_data; break;
                         }
                     }
                 }

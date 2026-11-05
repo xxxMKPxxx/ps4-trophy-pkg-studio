@@ -111,6 +111,97 @@ namespace PkgStudio
             throw new Exception("找不到字段 " + key);
         }
 
+        /// <summary>
+        /// 给所有显示名称字段（TITLE / STITLE / 各语言的 TITLE_xx）就地加前缀。
+        ///
+        /// 只写数据区 + 更新 used_len，**不动 key 表、不重建结构、不改文件大小**：
+        /// 之前整体重写 param.sfo 会导致 PS4 拒绝安装（CE-34629）。
+        /// 放不下时按 UTF-8 字符边界裁剪原名称，保证不会写出半个汉字。
+        /// </summary>
+        public static int PrefixTitles(byte[] buf, string prefix)
+        {
+            if (buf == null || buf.Length < 20 || string.IsNullOrEmpty(prefix))
+                return 0;
+
+            uint keyStart = BitConverter.ToUInt32(buf, 8);
+            uint dataStart = BitConverter.ToUInt32(buf, 12);
+            uint count = BitConverter.ToUInt32(buf, 16);
+            if (count > 512)
+                return 0;
+
+            int changed = 0;
+            for (int i = 0; i < count; i++)
+            {
+                int e = 20 + i * 16;
+                if (e + 16 > buf.Length)
+                    break;
+
+                ushort fmt = BitConverter.ToUInt16(buf, e + 2);
+                if (fmt != 0x0204)                 // 只动 UTF-8 字符串字段
+                    continue;
+
+                ushort ko = BitConverter.ToUInt16(buf, e);
+                uint used = BitConverter.ToUInt32(buf, e + 4);
+                uint max = BitConverter.ToUInt32(buf, e + 8);
+                uint dOff = BitConverter.ToUInt32(buf, e + 12);
+
+                int kp = (int)(keyStart + ko);
+                long dp = (long)dataStart + dOff;
+                if (kp < 0 || kp >= buf.Length || dp < 0 || dp + max > buf.Length || max == 0)
+                    continue;
+
+                int ke = kp;
+                while (ke < buf.Length && buf[ke] != 0)
+                    ke++;
+                string key = Encoding.ASCII.GetString(buf, kp, ke - kp);
+                if (!IsTitleKey(key))
+                    continue;
+
+                int n = (int)Math.Min(used, max);
+                while (n > 0 && buf[(int)dp + n - 1] == 0)
+                    n--;
+                string cur = n > 0 ? Encoding.UTF8.GetString(buf, (int)dp, n) : "";
+
+                byte[] nb = Encoding.UTF8.GetBytes(prefix + cur + "\0");
+                if (nb.Length > max)
+                {
+                    // 前缀本身放不下就跳过这个字段（STITLE 有时只有几十字节）
+                    int pbytes = Encoding.UTF8.GetByteCount(prefix);
+                    if (pbytes + 1 > max)
+                        continue;
+
+                    StringBuilder sb = new StringBuilder(prefix);
+                    int usedBytes = pbytes;
+                    foreach (char ch in cur)
+                    {
+                        int cb = Encoding.UTF8.GetByteCount(ch.ToString());
+                        if (usedBytes + cb + 1 > max)
+                            break;
+                        sb.Append(ch);
+                        usedBytes += cb;
+                    }
+                    nb = Encoding.UTF8.GetBytes(sb.ToString() + "\0");
+                }
+
+                Array.Clear(buf, (int)dp, (int)max);
+                Buffer.BlockCopy(nb, 0, buf, (int)dp, nb.Length);
+                byte[] ul = BitConverter.GetBytes((uint)nb.Length);
+                Buffer.BlockCopy(ul, 0, buf, e + 4, 4);
+                changed++;
+            }
+            return changed;
+        }
+
+        private static bool IsTitleKey(string key)
+        {
+            if (key == "TITLE" || key == "STITLE")
+                return true;
+            if (key == "TITLE_ID")
+                return false;
+            return key.StartsWith("TITLE_", StringComparison.Ordinal)
+                || key.StartsWith("STITLE_", StringComparison.Ordinal);
+        }
+
         /// <summary>二进制里按字节串等长替换（nptitle.dat 用）。</summary>
         public static byte[] ReplaceBytes(byte[] data, byte[] oldBytes, byte[] newBytes)
         {

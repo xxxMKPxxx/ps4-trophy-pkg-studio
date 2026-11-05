@@ -53,6 +53,7 @@
     <Compile Include="src\Orbis.cs" />
     <Compile Include="src\PkgName.cs" />
     <Compile Include="src\PkgFast.cs" />
+    <Compile Include="src\IconBuilder.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

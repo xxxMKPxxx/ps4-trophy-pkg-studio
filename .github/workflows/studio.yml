@@ -90,6 +90,12 @@ jobs:
           Copy-Item $font "$out\template\font.ttf" -Force
           Write-Host ("已放入界面字体：{0:N1} MB" -f ((Get-Item $font).Length / 1MB))
 
+          # 奖杯图标：打 pkg 时叠到游戏封面上，生成解锁器的 icon0.png
+          $cup = '.\pkg-studio\assets\icon1.png'
+          if (-not (Test-Path $cup)) { throw '缺 pkg-studio\assets\icon1.png（奖杯图标）' }
+          Copy-Item $cup "$out\template\icon1.png" -Force
+          Write-Host ("已放入奖杯图标：{0:N1} KB" -f ((Get-Item $cup).Length / 1KB))
+
           Get-ChildItem "$out" -Filter *.dll | Select-Object Name, Length | Format-Table
 
       - uses: actions/upload-artifact@v4

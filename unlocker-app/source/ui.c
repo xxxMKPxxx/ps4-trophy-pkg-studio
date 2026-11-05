@@ -6,7 +6,10 @@
  *   X          解锁光标处奖杯
  *   L1 + ○     一键解锁（按顺序表；运行中再按 = 停止）
  *   △          刷新解锁状态
- *   ○          退出（完成界面里 ○ 退回列表）
+ *   ○          不再退出程序（完成界面里 ○ 退回列表）
+ *
+ * 关闭应用请用 PS 键 →「关闭应用程序」：PS4 的 big app 自己退出会触发
+ * 崩溃报告，所以这个界面是常驻的，按 ○ 不再结束进程。
  *
  * 计时一律用 sceKernelGetProcessTime()（微秒，单调），不按帧数：
  * 一帧实际要 60ms 以上（画 1920x1080 + 逐字渲染 + 等 flip），
@@ -134,8 +137,10 @@ static void draw_row(int y, int id, const char *name, int is_unlocked, int selec
 static void draw_footer(void)
 {
     gfx_fill(0, GFX_HEIGHT - 96, GFX_WIDTH, 96, PANEL);
-    text(s_font_small, LIST_X, GFX_HEIGHT - 70, SAFE_TEXT_W + 400,
-         "↑↓ 选择   L2/R2 翻页   X 解锁   L1+○ 一键解锁   △ 刷新   ○ 退出", TEXT_DIM);
+    text(s_font_small, LIST_X, GFX_HEIGHT - 74, SAFE_TEXT_W + 400,
+         "↑↓ 选择   L2/R2 翻页   X 解锁   L1+○ 一键解锁   △ 刷新", TEXT_DIM);
+    text(s_font_small, LIST_X, GFX_HEIGHT - 38, SAFE_TEXT_W + 400,
+         "关闭应用：按 PS 键 → 关闭应用程序（○ 不再退出）", TEXT_DIM);
 }
 
 /* 取计划里某个位置的名字，取不到就给个占位 */
@@ -214,7 +219,7 @@ static void draw_done_panel(void)
              s_ok, s_skip, s_fail);
     text(s_font_small, LIST_X, y + 110, SAFE_TEXT_W, buf, TEXT);
 
-    text(s_font_small, LIST_X, y + 180, SAFE_TEXT_W, "○ 退出    X 返回列表", TEXT_DIM);
+    text(s_font_small, LIST_X, y + 180, SAFE_TEXT_W, "X 返回列表    关闭应用请按 PS 键", TEXT_DIM);
 }
 
 static void draw_toast(void)
@@ -380,7 +385,8 @@ void ui_run(void)
         if (now & ORBIS_PAD_BUTTON_L1)
             s_l1_until = t + US_PER_SEC;
 
-        /* ○：普通按 = 退出（完成界面 = 回列表）；L1 + ○ = 一键解锁 / 停止 */
+        /* ○ 不再退出程序：单独按只给提示（完成界面里仍可回列表），
+           L1 + ○ 才是一键解锁 / 停止。关闭应用走 PS 键菜单。 */
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
             int combo = (now & ORBIS_PAD_BUTTON_L1) || t < s_l1_until;
             log_line("circle pressed combo=%d mode=%d", combo, s_mode);
@@ -400,8 +406,8 @@ void ui_run(void)
             } else if (s_mode == 2) {
                 s_mode = 0;
             } else {
-                log_line("user exit");
-                break;
+                toast("关闭应用请按 PS 键 → 关闭应用程序");
+                log_line("circle ignored (exit disabled)");
             }
         }
 

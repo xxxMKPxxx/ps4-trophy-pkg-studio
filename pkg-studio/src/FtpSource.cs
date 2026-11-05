@@ -119,10 +119,15 @@ namespace PkgStudio
         /// <summary>打包前补齐 nptitle / npbind / trophy。</summary>
         public static void EnsureFiles(GameItem it, Action<string> log)
         {
+            string url = it.Origin.EndsWith("/") ? it.Origin : it.Origin + "/";
+
+            // 游戏图标（做解锁器图标的底图）。只在打包时下载，扫描阶段不下线图，
+            // 免得几百个游戏各多一次 FTP 请求。
+            if (it.Icon0 == null || it.Icon0.Length == 0)
+                it.Icon0 = Download(url + "icon0.png");
+
             if (it.FilesLoaded)
                 return;
-
-            string url = it.Origin.EndsWith("/") ? it.Origin : it.Origin + "/";
 
             it.Nptitle = Download(url + "nptitle.dat");
             it.Npbind = Download(url + "npbind.dat");

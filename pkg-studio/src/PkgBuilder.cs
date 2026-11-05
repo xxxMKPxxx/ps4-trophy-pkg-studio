@@ -78,6 +78,14 @@ namespace PkgStudio
                 log("TITLE_ID: " + oldId + " -> " + newId);
                 log("CONTENT_ID: " + newContentId);
 
+                // 1.5 显示名称加「奖杯：」前缀，PS4 主界面上和原游戏区分开。
+                //     所有语言的 TITLE / STITLE 都改（中文系统读的是对应语言字段），
+                //     放不下的按 UTF-8 字符边界裁剪，不破坏 SFO 结构。
+                int names = Sfo.PrefixTitles(sfo, "奖杯：");
+                string displayName = Sfo.Get(sfo, "TITLE");
+                Log.Write("显示名称: " + displayName + "（改了 " + names + " 个字段）");
+                log("显示名称: " + displayName);
+
                 string sceSys = Path.Combine(target, "sce_sys");
                 Directory.CreateDirectory(sceSys);
                 File.WriteAllBytes(Path.Combine(sceSys, "param.sfo"), sfo);
@@ -145,6 +153,29 @@ namespace PkgStudio
                 {
                     Log.Write("警告：template 里没有 font.ttf，解锁器界面会因为没有字体而退出");
                     log("警告：template 缺 font.ttf，界面起不来，请用最新版工具目录");
+                }
+
+                // 4.8 图标：用游戏自己的 icon0.png 当底图，中间叠一个奖杯图标。
+                //     gp4 里本来就有 sce_sys/icon0.png 条目，直接覆盖文件即可。
+                string overlayPath = Path.Combine(templateDir, "icon1.png");
+                byte[] overlay = File.Exists(overlayPath) ? File.ReadAllBytes(overlayPath) : null;
+                string iconDst = Path.Combine(sceSys, "icon0.png");
+                byte[] composed = IconBuilder.Compose(it.Icon0, overlay, iconDst);
+                if (composed != null)
+                {
+                    File.WriteAllBytes(iconDst, composed);
+                    log("图标：游戏封面 + 奖杯（512×512）");
+                    Log.Write("已合成 icon0.png（" + composed.Length + "B，底图 "
+                        + (it.Icon0 != null && it.Icon0.Length > 0 ? "游戏图标" : "模板图标") + "）");
+                }
+                else if (overlay == null)
+                {
+                    log("警告：template 里缺 icon1.png，图标保持模板原样");
+                    Log.Write("警告：template 里缺 icon1.png，未合成图标");
+                }
+                else
+                {
+                    log("警告：没有可用底图，图标保持模板原样");
                 }
 
                 // 4. gp4：只改 content_id

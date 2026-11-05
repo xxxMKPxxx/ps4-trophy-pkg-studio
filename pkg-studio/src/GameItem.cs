@@ -28,6 +28,7 @@ namespace PkgStudio
         public byte[] Nptitle;
         public byte[] Npbind;
         public byte[] Trophy;
+        public byte[] Icon0;         // 游戏自己的 icon0.png，用作解锁器图标的底图
 
         public bool Usable
         {
