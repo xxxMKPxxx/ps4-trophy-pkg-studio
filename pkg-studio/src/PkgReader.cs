@@ -12,56 +12,76 @@ namespace PkgStudio
             if (!File.Exists(pkgPath))
                 throw new Exception("文件不存在: " + pkgPath);
 
-            string tmp = Path.Combine(workRoot, "import_" + Guid.NewGuid().ToString("N").Substring(0, 8));
-            Directory.CreateDirectory(tmp);
+            FileInfo fi = new FileInfo(pkgPath);
+            string key = CacheKey(pkgPath, fi);
+            string work = Path.Combine(workRoot, "pkgcache", key);
 
             string exe = Orbis.EnsureTool(templateDir, workRoot);
             string tools = Path.GetDirectoryName(exe);
 
             const string Zeros = "00000000000000000000000000000000";
-            Log.Write("导入 pkg: " + pkgPath);
+            Log.Write("导入 pkg: " + pkgPath + "  (" + (fi.Length / 1024 / 1024) + " MB)");
 
             Stopwatch watch = Stopwatch.StartNew();
-            string sfoPath = null;
-            string lastOut = null;
 
-            // 关键：只解 sce_sys（几个 MB），不要整包解压（可能是几十 GB）。
-            // img_extract 支持 "<pkg>:<内部路径>" 这种选择性解包。
-            string[] selectors = new string[] { ":sce_sys", ":Image0/sce_sys" };
-            int n = 0;
-            foreach (string sel in selectors)
+            // 缓存命中就直接用，不再碰 orbis-pub-cmd
+            string sfoPath = FindFile(work, "param.sfo");
+            if (sfoPath != null)
             {
-                n++;
-                string sub = Path.Combine(tmp, "sel" + n);
-                watch.Restart();
-
-                lastOut = Orbis.Run(exe,
-                    "img_extract --passcode " + Zeros + " \"" + pkgPath + sel + "\" \"" + sub + "\"",
-                    tools);
-
-                sfoPath = FindFile(tmp, "param.sfo");
-                Log.Write("选择性解包 " + sel + " 用时 " + watch.ElapsedMilliseconds + " ms，"
-                    + (sfoPath == null ? "未拿到 param.sfo" : "成功")
-                    + "，输出: " + (string.IsNullOrEmpty(lastOut) ? "(空)" : lastOut.Trim()));
-
-                if (sfoPath != null)
-                    break;
+                Log.Write("命中缓存: " + work);
             }
-
-            // 老版本工具不支持选择性解包时，退回整包
-            if (sfoPath == null)
+            else
             {
-                Log.Write("退回整包解压（会慢很多）");
-                watch.Restart();
-                lastOut = Orbis.Run(exe,
-                    "img_extract --passcode " + Zeros + " \"" + pkgPath + "\" \"" + tmp + "\"",
-                    tools);
-                Log.Write("整包解压用时 " + watch.ElapsedMilliseconds + " ms");
-                sfoPath = FindFile(tmp, "param.sfo");
+                if (!Directory.Exists(work))
+                    Directory.CreateDirectory(work);
+
+                string lastOut = null;
+
+                // 只解 sce_sys（几 MB），不要整包解压（可能几十 GB）。
+                // 写法来自 orbis-pub-cmd 的 "<pkg>:<内部路径>" 选择性解包；
+                // 不同版本内部路径不同，Image0 最常见，其次 Sc0。
+                string[] selectors = new string[] { ":Image0/sce_sys", ":sce_sys", ":Sc0/sce_sys" };
+                int n = 0;
+
+                foreach (string sel in selectors)
+                {
+                    n++;
+                    string sub = Path.Combine(work, "sel" + n);
+                    watch.Restart();
+
+                    lastOut = Orbis.Run(exe,
+                        "img_extract --passcode " + Zeros + " \"" + pkgPath + sel + "\" \"" + sub + "\"",
+                        tools);
+
+                    sfoPath = FindFile(work, "param.sfo");
+                    Log.Write("选择性解包 " + sel + " 用时 " + watch.ElapsedMilliseconds + " ms，"
+                        + (sfoPath == null ? "未拿到 param.sfo" : "成功"));
+
+                    if (sfoPath != null)
+                        break;
+                }
+
+                // 都不支持时退回整包（很慢，尽量别走到这里）
                 if (sfoPath == null)
-                    throw new Exception("解包后找不到 param.sfo。\r\n"
-                        + "零售原包没有 passcode 解不开，只能导入 fpkg。\r\n\r\n"
-                        + "orbis-pub-cmd 输出：\r\n" + Trim(lastOut));
+                {
+                    Log.Write("选择性解包全部失败，退回整包解压（慢）");
+                    watch.Restart();
+
+                    lastOut = Orbis.Run(exe,
+                        "img_extract --passcode " + Zeros + " \"" + pkgPath + "\" \"" + work + "\"",
+                        tools);
+
+                    Log.Write("整包解压用时 " + watch.ElapsedMilliseconds + " ms");
+
+                    sfoPath = FindFile(work, "param.sfo");
+                    if (sfoPath == null)
+                    {
+                        try { Directory.Delete(work, true); } catch { }
+                        throw new Exception("解包后找不到 param.sfo。\r\n"
+                            + "零售原包没有 passcode 解不开，只能导入 fpkg。\r\n\r\n"
+                            + "orbis-pub-cmd 输出：\r\n" + Trim(lastOut));
+                    }
+                }
             }
 
             string dir = Path.GetDirectoryName(sfoPath);
@@ -81,13 +101,25 @@ namespace PkgStudio
             it.Npbind = TryRead(dir, "npbind.dat");
             it.Trophy = TryReadTrophy(dir);
 
-            Log.Write("导入结果: " + it.Title + " / " + it.TitleId + " / " + it.Category
+            Log.Write("导入结果(" + watch.ElapsedMilliseconds + " ms): " + it.Title + " / " + it.TitleId
+                + " / " + it.Category
                 + " / nptitle=" + (it.Nptitle == null ? "无" : it.Nptitle.Length + "B")
                 + " / npbind=" + (it.Npbind == null ? "无" : it.Npbind.Length + "B")
                 + " / trophy=" + (it.Trophy == null ? "无" : it.Trophy.Length + "B"));
 
-            try { Directory.Delete(tmp, true); } catch { }
             return it;
+        }
+
+        /// <summary>缓存键：路径 + 大小 + 修改时间。换包或改文件都会自动失效。</summary>
+        private static string CacheKey(string path, FileInfo fi)
+        {
+            uint h = 2166136261u;
+            foreach (char c in path.ToLowerInvariant())
+            {
+                h ^= c;
+                h *= 16777619u;
+            }
+            return h.ToString("x8") + "_" + fi.Length.ToString("x") + "_" + fi.LastWriteTimeUtc.Ticks.ToString("x");
         }
 
         private static string Trim(string s)
@@ -103,7 +135,7 @@ namespace PkgStudio
 
         public static string FindFile(string root, string name)
         {
-            if (!Directory.Exists(root))
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
                 return null;
 
             string[] direct = Directory.GetFiles(root, name, SearchOption.AllDirectories);
@@ -112,7 +144,7 @@ namespace PkgStudio
 
         public static string FindDir(string root, string name)
         {
-            if (!Directory.Exists(root))
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
                 return null;
 
             string[] direct = Directory.GetDirectories(root, name, SearchOption.AllDirectories);
@@ -133,7 +165,6 @@ namespace PkgStudio
             p = Path.Combine(dir, "trophy00.trp");
             if (File.Exists(p)) return File.ReadAllBytes(p);
 
-            // 有的包把奖杯放在 sce_sys/trophy/ 下一层
             string found = FindFile(dir, "trophy00.trp");
             return found != null ? File.ReadAllBytes(found) : null;
         }

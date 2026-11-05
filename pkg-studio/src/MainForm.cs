@@ -33,6 +33,37 @@ namespace PkgStudio
             Font = new Font("Microsoft YaHei UI", 9f);
 
             BuildUi();
+
+            // 导入缓存目录只留最近两周，避免越滚越大
+            Task.Run(new Action(CleanupCache));
+        }
+
+        private void CleanupCache()
+        {
+            try
+            {
+                string root = Path.Combine(workRoot, "pkgcache");
+                if (!Directory.Exists(root))
+                    return;
+
+                DateTime limit = DateTime.UtcNow.AddDays(-14);
+                int removed = 0;
+                foreach (string d in Directory.GetDirectories(root))
+                {
+                    try
+                    {
+                        if (Directory.GetLastWriteTimeUtc(d) < limit)
+                        {
+                            Directory.Delete(d, true);
+                            removed++;
+                        }
+                    }
+                    catch { }
+                }
+                if (removed > 0)
+                    Log.Write("清理过期导入缓存 " + removed + " 个");
+            }
+            catch { }
         }
 
         private string TemplateDir
