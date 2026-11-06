@@ -56,18 +56,23 @@ namespace PkgStudio
                     continue;
                 }
 
-                // 目录名就是 Title ID，先过滤掉系统应用，省掉大量无用下载
+                // 目录名就是 Title ID。CUS 开头 = 游戏本体；
+                // XDPX 开头 = 之前生成的解锁器 —— 它的 appmeta 里 param.sfo/nptitle/npbind
+                // 齐全，npbind 的 NPWR 就指向原游戏的奖杯集，TRP 也能从 conf/<NPWR>/ 取到，
+                // 所以旧解锁器可以直接当「提取源」再出新包（原游戏 PKG 删了也不影响）。
                 List<string> targets = new List<string>();
                 foreach (string n in names)
                 {
                     if (n.Length < 4)
                         continue;
-                    if (!n.StartsWith("CUS", StringComparison.OrdinalIgnoreCase))
+                    bool cand = n.StartsWith("CUS", StringComparison.OrdinalIgnoreCase)
+                             || n.StartsWith("XDPX", StringComparison.OrdinalIgnoreCase);
+                    if (!cand)
                         continue;
                     targets.Add(n);
                 }
 
-                log("目录 " + d + " 条目 " + names.Count + "，CUS 开头 " + targets.Count);
+                log("目录 " + d + " 条目 " + names.Count + "，CUS/XDPX 开头 " + targets.Count);
 
                 Parallel.ForEach(targets,
                     new ParallelOptions { MaxDegreeOfParallelism = Parallelism },

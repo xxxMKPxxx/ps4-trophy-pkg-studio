@@ -162,6 +162,11 @@ namespace PkgStudio
                     n--;
                 string cur = n > 0 ? Encoding.UTF8.GetString(buf, (int)dp, n) : "";
 
+                // 已经带前缀（从旧解锁器提取的 sfo 会是「奖杯：XXX」）就跳过，
+                // 避免再出一包变成「奖杯：奖杯：XXX」
+                if (cur.StartsWith(prefix, StringComparison.Ordinal))
+                    continue;
+
                 byte[] nb = Encoding.UTF8.GetBytes(prefix + cur + "\0");
                 if (nb.Length > max)
                 {
