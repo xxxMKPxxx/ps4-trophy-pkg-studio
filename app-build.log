@@ -1,0 +1,10 @@
+=== Fri Nov  6 14:18:06 UTC 2026 build start ===
+rm -rf build eboot.oelf eboot.self
+mkdir -p build
+clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -Wall -isysroot /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain -isystem /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain/include -o build/font.o source/font.c
+clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -Wall -isysroot /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain -isystem /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain/include -o build/gfx.o source/gfx.c
+clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -Wall -isysroot /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain -isystem /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain/include -o build/main.o source/main.c
+clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -Wall -isysroot /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain -isystem /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain/include -o build/ui.o source/ui.c
+ld.lld build/font.o build/gfx.o build/main.o build/ui.o -o build/unlocker.elf -m elf_x86_64 -pie --script /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain/link.x --eh-frame-hdr -L/home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain/lib -lc -lkernel -lSceUserService -lSceSysmodule -lSceNpTrophy -lSceVideoOut -lScePad -lSceFreeType -lSceSystemService /home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain/lib/crt1.o
+/home/runner/work/ps4-trophy-pkg-studio/ps4-trophy-pkg-studio/unlocker-app/OpenOrbis/PS4Toolchain/bin/linux/create-fself -in=build/unlocker.elf \
+	-out=eboot.oelf --eboot "eboot.self" --paid 0x3800000000000011
