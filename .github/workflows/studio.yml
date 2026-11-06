@@ -102,14 +102,17 @@ jobs:
           # 使用者按 template/README.txt 指引自行从上游 PS4_Tools 获取。
           Remove-Item "$out\template\orbis-pub-cmd.exe" -Force -ErrorAction SilentlyContinue
           Remove-Item "$out\template\CONTENTS.zip" -Force -ErrorAction SilentlyContinue
-          @'
-本仓库不分发 Sony SDK 专有文件（orbis-pub-cmd.exe、CONTENTS.zip）。
-
-首次使用前请自行获取并放入本 template 目录（与 README.txt 同级）：
-  1. git clone https://github.com/xXxTheDarkprogramerxXx/PS4_Tools.git
-  2. 复制 PS4_Tools\TrophyUnlocker\Resources\ 下的 CONTENTS.zip、*.gp4、
-     orbis-pub-cmd.exe 到本目录
-'@ | Set-Content "$out\template\README.txt" -Encoding utf8
+          # 注意：不要在这里用 PowerShell here-string —— 其结束符 '@ 必须顶格，
+          # 会提前终止 YAML 块标量导致整个 workflow 解析失败。
+          $readme = @(
+            '本仓库不分发 Sony SDK 专有文件（orbis-pub-cmd.exe、CONTENTS.zip）。',
+            '',
+            '首次使用前请自行获取并放入本 template 目录（与 README.txt 同级）：',
+            '  1. git clone https://github.com/xXxTheDarkprogramerxXx/PS4_Tools.git',
+            '  2. 复制 PS4_Tools\TrophyUnlocker\Resources\ 下的 CONTENTS.zip、*.gp4、',
+            '     orbis-pub-cmd.exe 到本目录'
+          )
+          $readme | Set-Content "$out\template\README.txt" -Encoding utf8
           Write-Host '已剔除 Sony 专有文件，写入 template/README.txt（获取指引）'
 
       - uses: actions/upload-artifact@v4
