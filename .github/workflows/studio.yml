@@ -5,9 +5,8 @@ on:
     branches:
       - main
       - 'feat/**'
-    paths:
-      - 'pkg-studio/**'
-      - '.github/workflows/studio.yml'
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -151,3 +150,21 @@ jobs:
 
           git commit -m "build $env:GITHUB_SHA"
           git push -f origin HEAD:refs/heads/builds
+
+      # 打 v* tag 推送时，把产物 zip 挂到 GitHub Release 上
+      # （产物已剔除 Sony 专有文件，可公开发布）
+      - name: 发布 GitHub Release（仅 tag）
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $zip = 'PkgStudio-build.zip'
+          if (-not (Test-Path $zip)) { throw '构建产物 zip 不存在，无法发布 Release' }
+          $rel = "PkgStudio-$tag.zip"
+          Copy-Item $zip $rel -Force
+          Write-Host ("发布 {0}：{1:N1} MB" -f $tag, ((Get-Item $rel).Length / 1MB))
+          gh release create $tag $rel `
+            --title "PkgStudio $tag" `
+            --notes "下载 PkgStudio-$tag.zip 解压即用。首次打包前按 template/README.txt 指引自行获取 Sony 专有文件（orbis-pub-cmd.exe / CONTENTS.zip）。详见 README。"
