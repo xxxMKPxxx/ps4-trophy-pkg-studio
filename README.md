@@ -26,8 +26,11 @@
 - 顺序表文件按 `trophy_order_<TITLE_ID>.csv` 命名放在输出目录即随包打入
 
 构建：`.github/workflows/studio.yml` 在 `windows-latest` 上编译，并把上游
-`TrophyUnlocker/Resources`（`CONTENTS.zip`、`.gp4`、`orbis-pub-cmd.exe`）复制到
-产物目录的 `template/` 下。下载 artifact **PkgStudio** 即开即用。
+`TrophyUnlocker/Resources` 的 `.gp4` 工程与 `icon1.png` 等复制到产物目录的 `template/` 下。
+**`orbis-pub-cmd.exe` 与 `CONTENTS.zip`（Sony SDK 专有文件）不随本仓库的产物分发**，
+首次使用请按产物里 `template/README.txt` 的指引自行从上游
+[PS4_Tools](https://github.com/xXxTheDarkprogramerxXx/PS4_Tools) 仓库获取并放入 `template/`。
+下载 artifact **PkgStudio** 即可开始。
 
 ## `unlocker-app/` —— 解锁器本体（C，随 PKG 走）
 

@@ -98,6 +98,21 @@ jobs:
 
           Get-ChildItem "$out" -Filter *.dll | Select-Object Name, Length | Format-Table
 
+          # 公开发布合规：orbis-pub-cmd.exe（Sony SDK 专有工具）与 CONTENTS.zip
+          # （内含 Sony SDK 官方 np_trophy sample eboot）不随本仓库产物分发。
+          # 使用者按 template/README.txt 指引自行从上游 PS4_Tools 获取。
+          Remove-Item "$out\template\orbis-pub-cmd.exe" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$out\template\CONTENTS.zip" -Force -ErrorAction SilentlyContinue
+          @'
+本仓库不分发 Sony SDK 专有文件（orbis-pub-cmd.exe、CONTENTS.zip）。
+
+首次使用前请自行获取并放入本 template 目录（与 README.txt 同级）：
+  1. git clone https://github.com/xXxTheDarkprogramerxXx/PS4_Tools.git
+  2. 复制 PS4_Tools\TrophyUnlocker\Resources\ 下的 CONTENTS.zip、*.gp4、
+     orbis-pub-cmd.exe 到本目录
+'@ | Set-Content "$out\template\README.txt" -Encoding utf8
+          Write-Host '已剔除 Sony 专有文件，写入 template/README.txt（获取指引）'
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
