@@ -58,6 +58,28 @@ namespace PkgStudio
 
                 // 1. param.sfo：只做等长就地替换，不动结构
                 byte[] sfo = (byte[])it.Param.Clone();
+
+                // 装过补丁的游戏，appmeta 里的 param.sfo 是补丁版（CATEGORY=gp，
+                // APP_VER 变成补丁版本、CONTENT_ID 是 HP9000 前缀）。目录仍是游戏本体，
+                // nptitle/npbind 也仍指向原游戏奖杯集，但解锁器是独立应用，
+                // CATEGORY 必须是 gd，留着 gp 会被系统当成补丁包。
+                // 等长就地替换，不重建 SFO 结构 —— 整体重写曾导致 PS4 拒装（CE-34629）。
+                string cat = Sfo.Get(sfo, "CATEGORY");
+                if (string.Equals(cat, "gp", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        Sfo.ReplaceInPlace(sfo, "CATEGORY", "gp", "gd");
+                        Log.Write("CATEGORY: gp -> gd（" + it.TitleId + " 已打补丁，按本体出包）");
+                        log("CATEGORY: gp -> gd");
+                    }
+                    catch (Exception ex)
+                    {
+                        // 少数 SFO 没有 CATEGORY 或值不标准：不中断打包，但留下告警
+                        Log.Write("警告：CATEGORY 未能改为 gd（" + ex.Message + "）");
+                    }
+                }
+
                 string oldId = it.TitleId;
                 if (string.IsNullOrEmpty(oldId) || oldId.Length != 9)
                     throw new Exception("原 TITLE_ID 不是 9 字符: " + oldId);

@@ -20,9 +20,15 @@ namespace PkgStudio
     {
         private static readonly string[] Dirs = new string[]
         {
+            // 只有 system_data/priv/appmeta 下是平铺的 param.sfo/nptitle/npbind；
+            // user/appmeta 放的是 icon0/pic1 等展示素材，取不到 SFO 会记跳过日志。
             "system_data/priv/appmeta/",
+            // 外置盘游戏的元数据挂在内置盘的 external 子目录下（实测 178 个条目，
+            // 里面同样有 param.sfo）。external 这个名字不以 CUS/XDPX 开头，
+            // 必须单独作为一个根来 LIST，否则整批外置盘游戏都会被漏掉。
+            "system_data/priv/appmeta/external/",
             "user/appmeta/",
-            "mnt/ext0/user/appmeta/",
+            // 实测 mnt/ext0/user/appmeta/ 为空且没有 SFO，已移除。
             "mnt/ext1/user/appmeta/",
             "mnt/usb0/user/appmeta/",
             "mnt/usb1/user/appmeta/"
@@ -98,8 +104,27 @@ namespace PkgStudio
 
                             if (string.IsNullOrEmpty(it.TitleId))
                                 throw new Exception("没有 TITLE_ID");
-                            if (it.Kind == GameKind.Update)
-                                return;
+
+                            // appmeta/<TID>/param.sfo 会被已安装的补丁覆盖成 CATEGORY=gp
+                            // （APP_VER 变成补丁版本、CONTENT_ID 变 HP9000 前缀），但目录仍是
+                            // 游戏本体，nptitle/npbind 依旧指向原游戏的奖杯集。
+                            // 这里当成「已打补丁的本体」放行；PkgBuilder 会把 CATEGORY
+                            // 等长改回 gd，避免解锁器被系统当成补丁包。
+                            string cat = (it.Category ?? "").Trim();
+                            if (it.Kind == GameKind.Update
+                                && string.Equals(cat, "gp", StringComparison.OrdinalIgnoreCase))
+                            {
+                                it.Kind = GameKind.Game;
+                                Log.Write("放行已打补丁的本体 " + n + " (" + it.TitleId
+                                    + ", CATEGORY=gp, APP_VER=" + it.AppVer + ")");
+                            }
+                            else if (it.Kind != GameKind.Game)
+                            {
+                                // DLC / gpn / 无法识别的类别：照旧进列表（标红不可打包），
+                                // 但补一条日志，不再无声无息
+                                Log.Write("标记不可打包 " + n + " : CATEGORY="
+                                    + (it.Category ?? "?") + "（" + it.KindText + "）");
+                            }
 
                             lock (gate)
                             {
