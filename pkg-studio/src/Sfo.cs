@@ -112,6 +112,69 @@ namespace PkgStudio
         }
 
         /// <summary>
+        /// 把某个 UTF-8 字符串字段整体换成新值：只写数据区 + 更新 used_len，
+        /// 不动 key 表、不重建结构、不改文件大小。放不下时按 UTF-8 字符边界裁剪。
+        /// 和 PrefixTitles 用的是同一套写法，已验证 PS4 可以正常安装。
+        /// </summary>
+        public static void SetString(byte[] buf, string key, string value)
+        {
+            if (buf == null || buf.Length < 20 || key == null || value == null)
+                throw new Exception("SetString 参数不合法");
+
+            uint keyStart = BitConverter.ToUInt32(buf, 8);
+            uint dataStart = BitConverter.ToUInt32(buf, 12);
+            uint count = BitConverter.ToUInt32(buf, 16);
+            if (count > 512)
+                throw new Exception("SFO 条目数异常");
+
+            for (int i = 0; i < count; i++)
+            {
+                int e = 20 + i * 16;
+                if (e + 16 > buf.Length)
+                    break;
+
+                ushort fmt = BitConverter.ToUInt16(buf, e + 2);
+                if (fmt != 0x0204)                 // 只处理 UTF-8 字符串字段
+                    continue;
+
+                ushort ko = BitConverter.ToUInt16(buf, e);
+                uint max = BitConverter.ToUInt32(buf, e + 8);
+                uint dOff = BitConverter.ToUInt32(buf, e + 12);
+
+                int kp = (int)(keyStart + ko);
+                long dp = (long)dataStart + dOff;
+                if (kp < 0 || kp >= buf.Length || dp < 0 || dp + max > buf.Length || max == 0)
+                    continue;
+
+                int ke = kp;
+                while (ke < buf.Length && buf[ke] != 0)
+                    ke++;
+                string k = Encoding.ASCII.GetString(buf, kp, ke - kp);
+                if (k != key)
+                    continue;
+
+                StringBuilder sb = new StringBuilder();
+                int usedBytes = 1;                 // 结尾的 NUL
+                foreach (char ch in value)
+                {
+                    int cb = Encoding.UTF8.GetByteCount(ch.ToString());
+                    if (usedBytes + cb > max)
+                        break;
+                    sb.Append(ch);
+                    usedBytes += cb;
+                }
+                byte[] nb = Encoding.UTF8.GetBytes(sb.ToString() + "\0");
+
+                Array.Clear(buf, (int)dp, (int)max);
+                Buffer.BlockCopy(nb, 0, buf, (int)dp, nb.Length);
+                byte[] ul = BitConverter.GetBytes((uint)nb.Length);
+                Buffer.BlockCopy(ul, 0, buf, e + 4, 4);
+                return;
+            }
+            throw new Exception("找不到字符串字段 " + key);
+        }
+
+        /// <summary>
         /// 给所有显示名称字段（TITLE / STITLE / 各语言的 TITLE_xx）就地加前缀。
         ///
         /// 只写数据区 + 更新 used_len，**不动 key 表、不重建结构、不改文件大小**：

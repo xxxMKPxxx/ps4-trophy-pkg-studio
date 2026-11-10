@@ -56,56 +56,46 @@ namespace PkgStudio
                     Directory.Move(contents, target);
                 }
 
-                // 1. param.sfo：只做等长就地替换，不动结构
-                byte[] sfo = (byte[])it.Param.Clone();
-
-                // 装过补丁的游戏，appmeta 里的 param.sfo 是补丁版（CATEGORY=gp，
-                // APP_VER 变成补丁版本、CONTENT_ID 是 HP9000 前缀）。目录仍是游戏本体，
-                // nptitle/npbind 也仍指向原游戏奖杯集，但解锁器是独立应用，
-                // CATEGORY 必须是 gd，留着 gp 会被系统当成补丁包。
-                // 等长就地替换，不重建 SFO 结构 —— 整体重写曾导致 PS4 拒装（CE-34629）。
-                string cat = Sfo.Get(sfo, "CATEGORY");
-                if (string.Equals(cat, "gp", StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        Sfo.ReplaceInPlace(sfo, "CATEGORY", "gp", "gd");
-                        Log.Write("CATEGORY: gp -> gd（" + it.TitleId + " 已打补丁，按本体出包）");
-                        log("CATEGORY: gp -> gd");
-                    }
-                    catch (Exception ex)
-                    {
-                        // 少数 SFO 没有 CATEGORY 或值不标准：不中断打包，但留下告警
-                        Log.Write("警告：CATEGORY 未能改为 gd（" + ex.Message + "）");
-                    }
-                }
+                // 1. param.sfo：以模板自带的（Sony 已验证可打包的）SFO 作基底。
+                //
+                // 游戏 appmeta 里那份 param.sfo 是「当前安装版本」的：装过补丁的游戏
+                // 会是 CATEGORY=gp / APP_VER=01.xx / TARGET_APP_VER / PUBTOOLINFO…
+                // img_create 按 gp4 的 app_type="full" 校验，会直接报
+                //   "Format of the param file is not valid. (sce_sys/param.sfo,
+                //    unexpected Application Version (APP_VER))"
+                // 模板 SFO 只有 20 个字段，APP_VER=01.00 / VERSION=01.00 / CATEGORY=gd，
+                // 天然合法；CONTENT_ID 也是 EP 开头的本体格式，顺带避开 HP9000 补丁前缀。
+                // 只做等长替换 + 写数据区，不重建 SFO 结构（整体重写曾导致 CE-34629）。
+                string tplSfoPath = Path.Combine(target, "sce_sys", "param.sfo");
+                if (!File.Exists(tplSfoPath))
+                    throw new Exception("模板里缺 sce_sys/param.sfo，无法生成合法元数据");
+                byte[] sfo = File.ReadAllBytes(tplSfoPath);
 
                 string oldId = it.TitleId;
                 if (string.IsNullOrEmpty(oldId) || oldId.Length != 9)
                     throw new Exception("原 TITLE_ID 不是 9 字符: " + oldId);
 
                 string newId = NewTitleId(oldId);
-                Sfo.ReplaceInPlace(sfo, "TITLE_ID", oldId, newId);
-                try
-                {
-                    Sfo.ReplaceInPlace(sfo, "CONTENT_ID", oldId, newId);
-                }
-                catch (Exception ex)
-                {
-                    // CONTENT_ID 里不一定含完整的 9 字符，改不动就只记日志，不中断
-                    Log.Write("警告：" + it.TitleId + " 的 CONTENT_ID 未改（" + ex.Message + "）");
-                }
+                string tplId = Sfo.Get(sfo, "TITLE_ID");
+                if (string.IsNullOrEmpty(tplId) || tplId.Length != 9)
+                    throw new Exception("模板 param.sfo 的 TITLE_ID 异常: " + tplId);
+
+                Sfo.ReplaceInPlace(sfo, "TITLE_ID", tplId, newId);
+                Sfo.ReplaceInPlace(sfo, "CONTENT_ID", tplId, newId);
                 string newContentId = Sfo.Get(sfo, "CONTENT_ID");
-                Log.Write("TITLE_ID: " + oldId + " -> " + newId + " / CONTENT_ID: " + newContentId);
+                Log.Write("param.sfo 用模板基底: TITLE_ID " + oldId + " -> " + newId
+                    + " / CONTENT_ID: " + newContentId);
                 log("TITLE_ID: " + oldId + " -> " + newId);
                 log("CONTENT_ID: " + newContentId);
 
-                // 1.5 显示名称加「奖杯：」前缀，PS4 主界面上和原游戏区分开。
-                //     所有语言的 TITLE / STITLE 都改（中文系统读的是对应语言字段），
-                //     放不下的按 UTF-8 字符边界裁剪，不破坏 SFO 结构。
-                int names = Sfo.PrefixTitles(sfo, "奖杯：");
+                // 显示名：从游戏 SFO 取原名，写进模板 TITLE（max 128，够用）。
+                // 模板只有 TITLE 一个标题字段，直接带「奖杯：」前缀写入即可。
+                string gameTitle = null;
+                try { gameTitle = Sfo.Get(it.Param, "TITLE"); } catch { }
+                if (string.IsNullOrEmpty(gameTitle)) gameTitle = it.Title;
+                Sfo.SetString(sfo, "TITLE", "奖杯：" + gameTitle);
                 string displayName = Sfo.Get(sfo, "TITLE");
-                Log.Write("显示名称: " + displayName + "（改了 " + names + " 个字段）");
+                Log.Write("显示名称: " + displayName + "（模板 SFO 基底）");
                 log("显示名称: " + displayName);
 
                 string sceSys = Path.Combine(target, "sce_sys");
