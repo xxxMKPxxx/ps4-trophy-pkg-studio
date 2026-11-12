@@ -6,6 +6,7 @@
  *   X          解锁光标处奖杯
  *   L1 + ○     一键解锁（按顺序表；运行中再按 = 停止）
  *   △          刷新解锁状态
+ *   □          切换奖杯集（仅合集类游戏，npbind 里有多个 NPCOMMID 时）
  *   ○          不再退出程序（完成界面里 ○ 退回列表）
  *
  * 关闭应用请用 PS 键 →「关闭应用程序」：PS4 的 big app 自己退出会触发
@@ -55,7 +56,8 @@ static int s_font_small = -1;
 
 static int s_cur;
 static int s_top;
-static int s_mode;                /* 0 = 列表, 1 = 一键解锁中, 2 = 完成 */
+static int s_mode;                /* 0 = 列表, 1 = 一键解锁中, 2 = 完成, 3 = 选奖杯集 */
+static int s_game_sel;            /* 选择面板里的光标 */
 static int s_plan_id[512];
 static int s_plan_delay[512];
 static int s_plan_len;
@@ -114,6 +116,21 @@ static void draw_header(int total, int unlocked)
     /* 原来贴着右边缘画，右半边被裁时只剩「已解」两个字 */
     snprintf(buf, sizeof(buf), "已解锁 %d / %d", unlocked, total);
     text(s_font_small, LIST_X + 660, 42, 420, buf, GREEN);
+
+    /* 合集类游戏：明确显示当前注册的是哪一作，切换后这里会跟着变 */
+    if (api_game_count() > 1) {
+        char cm[32];
+        char gbuf[192];
+        uint32_t lab = 0;
+
+        if (api_game_info(api_game_cur(), cm, sizeof(cm), &lab) == 0) {
+            snprintf(gbuf, sizeof(gbuf),
+                     "本包 %d 个奖杯集   当前 %d/%d：%s   服务标签 %u",
+                     api_game_count(), api_game_cur() + 1, api_game_count(),
+                     cm, (unsigned)lab);
+            text(s_font_small, LIST_X, 76, SAFE_TEXT_W, gbuf, ACCENT);
+        }
+    }
 }
 
 static void draw_row(int y, int id, const char *name, int is_unlocked, int selected)
@@ -137,8 +154,12 @@ static void draw_row(int y, int id, const char *name, int is_unlocked, int selec
 static void draw_footer(void)
 {
     gfx_fill(0, GFX_HEIGHT - 96, GFX_WIDTH, 96, PANEL);
-    text(s_font_small, LIST_X, GFX_HEIGHT - 74, SAFE_TEXT_W + 400,
-         "↑↓ 选择   L2/R2 翻页   X 解锁   L1+○ 一键解锁   △ 刷新", TEXT_DIM);
+    if (api_game_count() > 1)
+        text(s_font_small, LIST_X, GFX_HEIGHT - 74, SAFE_TEXT_W + 400,
+             "↑↓ 选择   L2/R2 翻页   X 解锁   L1+○ 一键解锁   △ 刷新   □ 切换奖杯集", TEXT_DIM);
+    else
+        text(s_font_small, LIST_X, GFX_HEIGHT - 74, SAFE_TEXT_W + 400,
+             "↑↓ 选择   L2/R2 翻页   X 解锁   L1+○ 一键解锁   △ 刷新", TEXT_DIM);
     text(s_font_small, LIST_X, GFX_HEIGHT - 38, SAFE_TEXT_W + 400,
          "关闭应用：按 PS 键 → 关闭应用程序（○ 不再退出）", TEXT_DIM);
 }
@@ -238,6 +259,45 @@ static void draw_toast(void)
     gfx_fill(LIST_X, 132, w, 56, PANEL2);
     gfx_frame_rect(LIST_X, 132, w, 56, 2, ACCENT);
     text(s_font_small, LIST_X + 32, 146, w - 48, s_toast, TEXT);
+}
+
+/* 合集类游戏：一个包里挂了多个 NPCOMMID，进包之后再选具体哪一作 */
+static void draw_game_panel(void)
+{
+    int n = api_game_count();
+    int top = 180;
+    int rows_y = top + 96;
+    int bottom = rows_y + n * 64 + 72;
+    char buf[256];
+
+    gfx_fill(0, top - 40, GFX_WIDTH, bottom - (top - 40), PANEL);
+    gfx_fill(0, top - 40, GFX_WIDTH, 2, ACCENT);
+
+    text(s_font_title, LIST_X, top - 24, SAFE_TEXT_W, "选择奖杯集", TEXT);
+    snprintf(buf, sizeof(buf), "本包含 %d 个独立奖杯集；选中后重新注册并刷新奖杯列表", n);
+    text(s_font_small, LIST_X, top + 36, SAFE_TEXT_W, buf, TEXT_DIM);
+
+    for (int i = 0; i < n; i++) {
+        char cm[32];
+        uint32_t lab = 0;
+        int y = rows_y + i * 64;
+
+        if (api_game_info(i, cm, sizeof(cm), &lab) != 0)
+            continue;
+
+        gfx_fill(LIST_X, y, LIST_W, 56, i == s_game_sel ? PANEL2 : PANEL);
+        if (i == s_game_sel)
+            gfx_fill(LIST_X, y, 6, 56, ACCENT);
+
+        snprintf(buf, sizeof(buf), "%d / %d    %s    服务标签 %u%s",
+                 i + 1, n, cm, (unsigned)lab,
+                 i == api_game_cur() ? "   （当前）" : "");
+        text(s_font_row, LIST_X + 26, y + 14, SAFE_TEXT_W, buf,
+             i == s_game_sel ? ACCENT : TEXT);
+    }
+
+    text(s_font_small, LIST_X, rows_y + n * 64 + 16, SAFE_TEXT_W,
+         "↑↓ 选择   X 确认   ○ 返回", TEXT_DIM);
 }
 
 /* ---------------- 一键解锁 ---------------- */
@@ -347,7 +407,7 @@ void ui_run(void)
 {
     int pad;
     uint32_t prev = 0;
-    int total = api_count();
+    int total;                    /* 切换奖杯集后数量会变，每帧重取 */
 
     if (scePadInit() != 0)
         return;
@@ -374,6 +434,8 @@ void ui_run(void)
         uint32_t now = 0, pressed;
         uint64_t t = now_us();
 
+        total = api_count();
+
         memset(&pd, 0, sizeof(pd));
         if (scePadReadState(pad, &pd) == 0)
             now = pd.buttons;
@@ -388,26 +450,32 @@ void ui_run(void)
         /* ○ 不再退出程序：单独按只给提示（完成界面里仍可回列表），
            L1 + ○ 才是一键解锁 / 停止。关闭应用走 PS 键菜单。 */
         if (pressed & ORBIS_PAD_BUTTON_CIRCLE) {
-            int combo = (now & ORBIS_PAD_BUTTON_L1) || t < s_l1_until;
-            log_line("circle pressed combo=%d mode=%d", combo, s_mode);
-            s_l1_until = 0;
-            if (combo) {
-                if (s_mode == 0) {
-                    s_ok = s_skip = s_fail = 0;
-                    build_plan();
-                    s_mode = 1;
-                    log_line("auto start plan=%d", s_plan_len);
-                } else if (s_mode == 1) {
-                    s_mode = 2;
-                    log_line("auto stopped pos=%d ok=%d", s_plan_pos, s_ok);
-                } else {
-                    s_mode = 0;
-                }
-            } else if (s_mode == 2) {
+            if (s_mode == 3) {
+                /* 选择面板里 ○ 就是取消，不要触发一键解锁也没必要弹退出提示 */
                 s_mode = 0;
+                log_line("game select cancelled");
             } else {
-                toast("关闭应用请按 PS 键 → 关闭应用程序");
-                log_line("circle ignored (exit disabled)");
+                int combo = (now & ORBIS_PAD_BUTTON_L1) || t < s_l1_until;
+                log_line("circle pressed combo=%d mode=%d", combo, s_mode);
+                s_l1_until = 0;
+                if (combo) {
+                    if (s_mode == 0) {
+                        s_ok = s_skip = s_fail = 0;
+                        build_plan();
+                        s_mode = 1;
+                        log_line("auto start plan=%d", s_plan_len);
+                    } else if (s_mode == 1) {
+                        s_mode = 2;
+                        log_line("auto stopped pos=%d ok=%d", s_plan_pos, s_ok);
+                    } else {
+                        s_mode = 0;
+                    }
+                } else if (s_mode == 2) {
+                    s_mode = 0;
+                } else {
+                    toast("关闭应用请按 PS 键 → 关闭应用程序");
+                    log_line("circle ignored (exit disabled)");
+                }
             }
         }
 
@@ -450,6 +518,49 @@ void ui_run(void)
             if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
                 api_refresh();
                 toast("已刷新");
+            }
+
+            if ((pressed & ORBIS_PAD_BUTTON_SQUARE) && api_game_count() > 1) {
+                s_mode = 3;
+                s_game_sel = api_game_cur();
+                log_line("game select open count=%d", api_game_count());
+            }
+
+        } else if (s_mode == 3) {
+            int rc;
+
+            if (pressed & ORBIS_PAD_BUTTON_UP) {
+                if (s_game_sel > 0) s_game_sel--;
+            }
+            if (pressed & ORBIS_PAD_BUTTON_DOWN) {
+                if (s_game_sel < api_game_count() - 1) s_game_sel++;
+            }
+            if (pressed & ORBIS_PAD_BUTTON_SQUARE) {
+                s_mode = 0;
+                log_line("game select closed by square");
+            }
+            if (pressed & ORBIS_PAD_BUTTON_CROSS) {
+                if (s_game_sel == api_game_cur()) {
+                    s_mode = 0;
+                } else {
+                    /* 重新注册是慢操作，先刷一帧提示，别让画面看着像卡死 */
+                    gfx_clear(BG);
+                    text(s_font_row, LIST_X, 300, SAFE_TEXT_W, "正在切换奖杯集…", YELLOW);
+                    gfx_present();
+
+                    rc = api_switch_game(s_game_sel);
+                    if (rc == 0) {
+                        s_cur = 0;
+                        s_top = 0;
+                        s_mode = 0;
+                        toast("已切换到奖杯集 %d / %d，共 %d 个奖杯",
+                              s_game_sel + 1, api_game_count(), api_count());
+                        log_line("game switched ok");
+                    } else {
+                        toast("切换失败 0x%08x，可能该作品未在主机启动过", (uint32_t)rc);
+                        log_line("game switch fail rc=0x%08x", (uint32_t)rc);
+                    }
+                }
             }
 
         } else if (s_mode == 1) {
@@ -499,6 +610,8 @@ void ui_run(void)
             draw_auto_panel();
         else if (s_mode == 2)
             draw_done_panel();
+        else if (s_mode == 3)
+            draw_game_panel();
         else
             draw_footer();
 

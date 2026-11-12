@@ -40,10 +40,28 @@
 #define ORDER_PATH "/app0/trophy_order.csv"
 #define ORDER_PATH2 "/app0/sce_sys/trophy_order.csv"
 #define FONT_PATH "/app0/font.ttf"
+#define NPBIND_PATH "/app0/sce_sys/npbind.dat"
+#define NPBIND_PATH2 "/app0/npbind.dat"
 #define MAX_TROPHIES 512
 #define MAX_ORDER 512
+#define MAX_GAMES 8
 #define DEFAULT_DELAY_SEC 1
 #define FAIL_HOLD_SEC 10
+
+/* npbind.dat 里可以挂多个 NPCOMMID（合集类游戏，如 Uncharted 三部曲），
+   每块 384B，块内 +16 是 NP Service Label 的 ASCII 数字。
+   sceNpTrophyCreateContext 的第 3 个参数就是它：写死 0 会让 label=1/2/3
+   的合集稳定返回 0x80551626（请求了不存在的 service label）。 */
+typedef struct {
+    uint32_t label;          /* 数值型：'3' -> 3 */
+    uint32_t label_ascii;    /* 兜底：万一内部按 ASCII 取，试 0x33 */
+    char     commid[16];     /* NPWRxxxxx_00，UI 上用来区分是哪一作 */
+} np_game_t;
+
+static np_game_t g_games[MAX_GAMES];
+static int       g_game_count;
+static int       g_game_cur;
+static uint32_t  g_label;
 
 static int32_t g_ctx = -1;
 static int32_t g_hdl = -1;
@@ -200,16 +218,24 @@ static void hold_and_exit(const char *msg)
     app_exit(NULL);                     /* 不返回 */
 }
 
-/* 奖杯 context/handle 成对创建，方便注册失败时整体重建 */
-static int create_pair(int uid)
+/* 奖杯 context/handle 成对创建。第 3 个参数是 NP Service Label，
+   必须传 npbind 里真实存在的那个，否则 RegisterContext 直接被拒。 */
+static int create_pair(int uid, uint32_t label)
 {
-    int r = sceNpTrophyCreateContext(&g_ctx, uid, 0, 0);
+    int r;
+
+    g_ctx = -1;
+    g_hdl = -1;
+
+    r = sceNpTrophyCreateContext(&g_ctx, uid, label, 0);
     log_hex("CreateContext ", (uint32_t)r);
     if (r != 0)
         return r;
 
     r = sceNpTrophyCreateHandle(&g_hdl);
     log_hex("CreateHandle ", (uint32_t)r);
+    if (r != 0)
+        g_hdl = -1;
     return r;
 }
 
@@ -319,6 +345,71 @@ static void load_order(void)
     log_int("order entries ", g_order_len);
 }
 
+/* ---------------- npbind 多奖杯集解析 ---------------- */
+
+/* 实测格式（CUSA01399 / CUSA00066 / CUSA02104）：
+     0x00..0x83  文件头，@0x1C 是大端块数（1 / 2 / 3）
+     0x84 起     每块 384B：+0 = "NPWRxxxxx_00"，+12 = 00 11 00 0c，
+                 +16 = service label 的 ASCII 数字（'0' / '1' / '2' / '3'）
+     末尾 16B    校验，不算块
+   普通游戏只有一块 label='0'；Uncharted 三部曲是 '1'/'2'/'3'（没有 0）。 */
+static void parse_npbind(void)
+{
+    static unsigned char buf[8192];
+    int got = read_all(NPBIND_PATH, (char *)buf, sizeof(buf));
+    int blocks = 0;
+
+    g_game_count = 0;
+    g_game_cur = 0;
+    g_label = 0;
+
+    if (got < 0)
+        got = read_all(NPBIND_PATH2, (char *)buf, sizeof(buf));
+
+    if (got >= 148) {
+        blocks = ((int)buf[28] << 24) | ((int)buf[29] << 16) |
+                 ((int)buf[30] << 8) | (int)buf[31];
+        if (blocks < 1 || blocks > MAX_GAMES)
+            blocks = 1;
+
+        for (int i = 0; i < blocks && g_game_count < MAX_GAMES; i++) {
+            int off = 132 + i * 384;
+            unsigned char c;
+            uint32_t lab;
+
+            if (off + 17 > got)
+                break;
+            if (memcmp(buf + off, "NPWR", 4) != 0)
+                continue;
+
+            c = buf[off + 16];
+            lab = (c >= '0' && c <= '9') ? (uint32_t)(c - '0') : (uint32_t)i;
+
+            memset(&g_games[g_game_count], 0, sizeof(g_games[0]));
+            g_games[g_game_count].label = lab;
+            g_games[g_game_count].label_ascii = (uint32_t)c;
+            memcpy(g_games[g_game_count].commid, buf + off, 12);
+            g_game_count++;
+            log_line("npbind game %d = %s label=%u ascii=0x%02x",
+                     g_game_count - 1, g_games[g_game_count - 1].commid,
+                     (unsigned)lab, (unsigned)c);
+        }
+    } else {
+        log_str("npbind: 读不到文件，按单奖杯集 label=0 处理\n");
+    }
+
+    if (g_game_count == 0) {
+        /* 解析不出来也不能让程序起不来：退回原来的「只有一个、label=0」 */
+        memset(&g_games[0], 0, sizeof(g_games[0]));
+        strcpy(g_games[0].commid, "single");
+        g_games[0].label_ascii = '0';
+        g_game_count = 1;
+        log_str("npbind: 没解析出 commid，按单奖杯集处理\n");
+    }
+
+    log_int("npbind games ", g_game_count);
+}
+
 /* ---------------- 奖杯 API（给界面用） ---------------- */
 
 int api_count(void)
@@ -405,6 +496,145 @@ int api_unlock(int id)
         g_unlocked[id] = 1;
 
     return rc;
+}
+
+/* ---------------- 奖杯集注册 / 切换 ---------------- */
+
+static void recount_trophies(void)
+{
+    int count = 0, miss = 0;
+
+    for (int id = 0; id < MAX_TROPHIES && miss < 5; id++) {
+        OrbisNpTrophyDetails d;
+        OrbisNpTrophyData dt;
+
+        if (get_info(id, &d, &dt) == 0) {
+            count = id + 1;
+            miss = 0;
+        } else {
+            miss++;
+        }
+    }
+
+    g_count = count;
+    log_int("trophy count ", g_count);
+}
+
+/* 用某个 label 建一对 context/handle 并注册。
+   成功：旧 context 故意不销毁（RegisterContext 之后销毁有崩溃风险），
+         交给进程退出时系统回收，只把全局句柄换成新的。
+   失败：销毁这次新建、未注册成功的那对，恢复调用前的句柄。 */
+static int try_label(uint32_t label)
+{
+    int32_t old_ctx = g_ctx, old_hdl = g_hdl;
+    int rc;
+
+    log_hex("label try ", label);
+    rc = create_pair(g_uid, label);
+    if (rc == 0)
+        rc = sceNpTrophyRegisterContext(g_ctx, g_hdl, 0);
+    log_hex("  RegisterContext ", (uint32_t)rc);
+
+    if (rc != 0) {
+        destroy_pair();
+        g_ctx = old_ctx;
+        g_hdl = old_hdl;
+        return rc;
+    }
+
+    g_label = label;
+    return 0;
+}
+
+/* 注册第 idx 个奖杯集。
+   label 官方含义没公开文档，主候选按数值（1/2/3），另备 ASCII 值（0x31…）
+   和 0；实测哪个能注册成功就用哪个，并把成功的 label 记进日志。
+   verbose=1 是启动注册（保留 6 次重试应对间歇的 0x805516f4）。 */
+static int register_game(int idx, int verbose)
+{
+    uint32_t cand[3];
+    int nc = 0, last = -1;
+    char msg[192];
+
+    if (idx < 0 || idx >= g_game_count)
+        return -1;
+
+    cand[nc++] = g_games[idx].label;
+    if (g_games[idx].label_ascii != cand[0])
+        cand[nc++] = g_games[idx].label_ascii;
+    if (cand[0] != 0 && g_games[idx].label_ascii != 0)
+        cand[nc++] = 0;
+
+    for (int c = 0; c < nc; c++) {
+        int tries = (c == 0 && verbose) ? 6 : 1;
+
+        for (int a = 1; a <= tries; a++) {
+            last = try_label(cand[c]);
+            if (last == 0) {
+                g_game_cur = idx;
+                log_int("active game ", idx);
+                log_hex("active label ", g_label);
+                return 0;
+            }
+
+            log_int("register retry ", a);
+            if (verbose) {
+                snprintf(msg, sizeof(msg),
+                         "Trophy Unlocker  奖杯服务未就绪 0x%08x，重试 %d/%d…",
+                         (uint32_t)last, a + 1, tries);
+                boot_frame(msg, s_boot_font);
+            }
+            sceKernelUsleep(a < 3 ? 700000 : 1500000);
+        }
+    }
+
+    return last ? last : -1;
+}
+
+int api_game_count(void)
+{
+    return g_game_count;
+}
+
+int api_game_cur(void)
+{
+    return g_game_cur;
+}
+
+int api_game_info(int idx, char *commid, int cap, uint32_t *label)
+{
+    if (idx < 0 || idx >= g_game_count)
+        return -1;
+
+    if (commid && cap > 0) {
+        strncpy(commid, g_games[idx].commid, (size_t)cap - 1);
+        commid[cap - 1] = 0;
+    }
+    if (label)
+        *label = g_games[idx].label;
+    return 0;
+}
+
+/* 界面里选中另一个奖杯集时调用：重新注册 + 重数奖杯 + 刷新名字缓存。
+   失败时 try_label 已把句柄恢复成切换前那一对，界面照常可用。 */
+int api_switch_game(int idx)
+{
+    int rc;
+
+    if (idx < 0 || idx >= g_game_count || idx == g_game_cur)
+        return -1;
+
+    log_int("switch to game ", idx);
+    rc = register_game(idx, 0);
+    if (rc != 0) {
+        log_hex("switch failed ", (uint32_t)rc);
+        return rc;
+    }
+
+    recount_trophies();
+    api_refresh();
+    log_int("switch ok trophies ", g_count);
+    return 0;
 }
 
 /* ---------------- 启动 ---------------- */
@@ -504,44 +734,12 @@ int main(void)
     rc = sceSysmoduleLoadModule(ORBIS_SYSMODULE_NP_TROPHY);
     log_hex("LoadModule NP_TROPHY ", (uint32_t)rc);
 
-    /* 2.1 注册 context（带重试）
-       实测会间歇性返回 0x805516f4：上一次进程被强杀、或奖杯服务还在写
-       上一次解锁的数据时，注册会被拒。原来直接 hold_and_exit，画面停在
-       「正在读取奖杯…」看起来像卡死。现在最多试 6 次，每次把状态画出来；
-       第 3 次起连 context 一起重建，排除「残留上下文」这一类原因。 */
-    {
-        const int TRIES = 6;
-        char msg[192];
-
-        rc = create_pair(uid);
-
-        for (int attempt = 1; attempt <= TRIES; attempt++) {
-            if (rc == 0) {
-                rc = sceNpTrophyRegisterContext(g_ctx, g_hdl, 0);
-                log_hex("RegisterContext ", (uint32_t)rc);
-            }
-            if (rc == 0)
-                break;
-            if (attempt == TRIES)
-                break;
-
-            log_int("register retry ", attempt);
-            snprintf(msg, sizeof(msg),
-                     "Trophy Unlocker  奖杯服务未就绪 0x%08x，重试 %d/%d…",
-                     (uint32_t)rc, attempt + 1, TRIES);
-            boot_frame(msg, s_boot_font);
-            sceKernelUsleep(attempt < 3 ? 700000 : 1500000);
-
-            if (attempt >= 3) {
-                /* 销毁的是「注册失败、没有异步解锁在跑」的 context，
-                   和进程退出时销毁（会崩）不是一回事 */
-                destroy_pair();
-                rc = create_pair(uid);
-            } else {
-                rc = 0;                /* 保留 context，直接再注册一次 */
-            }
-        }
-    }
+    /* 2.1 解析 npbind 的 service label 并注册 context。
+       合集类游戏（Uncharted 三部曲、火影三部曲…）npbind 里挂多个 NPCOMMID，
+       label 不一定从 0 开始；写死 0 会稳定返回 0x80551626。
+       注册仍带重试，排除奖杯服务短暂未就绪的间歇性 0x805516f4。 */
+    parse_npbind();
+    rc = register_game(0, 1);
 
     if (rc != 0) {
         char msg[192];
@@ -554,24 +752,7 @@ int main(void)
     }
 
     /* 3. 数奖杯 */
-    {
-        int count = 0, miss = 0;
-
-        for (int id = 0; id < MAX_TROPHIES && miss < 5; id++) {
-            OrbisNpTrophyDetails d;
-            OrbisNpTrophyData dt;
-
-            if (get_info(id, &d, &dt) == 0) {
-                count = id + 1;
-                miss = 0;
-            } else {
-                miss++;
-            }
-        }
-
-        g_count = count;
-        log_int("trophy count ", g_count);
-    }
+    recount_trophies();
 
     if (g_count <= 0) {
         log_str("这个包没有奖杯集\n");
