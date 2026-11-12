@@ -156,6 +156,8 @@ jobs:
 
       # 打 v* tag 推送时，把产物 zip 挂到 GitHub Release 上
       # （产物已剔除 Sony 专有文件，可公开发布）
+      # 更新说明取自仓库根目录 CHANGELOG.md 里 `## [<tag>]` 那一节；
+      # 注意：这里不能用 here-string，'@ 顶格会截断 YAML 块标量（v1.0.0 踩过）
       - name: 发布 GitHub Release（仅 tag）
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -168,6 +170,24 @@ jobs:
           $rel = "PkgStudio-$tag.zip"
           Copy-Item $zip $rel -Force
           Write-Host ("发布 {0}：{1:N1} MB" -f $tag, ((Get-Item $rel).Length / 1MB))
-          gh release create $tag $rel `
-            --title "PkgStudio $tag" `
-            --notes "下载 PkgStudio-$tag.zip 解压即用。首次打包前按 template/README.txt 指引自行获取 Sony 专有文件（orbis-pub-cmd.exe / CONTENTS.zip）。详见 README。"
+
+          $head = '下载 PkgStudio-' + $tag + '.zip 解压即用。公开包按合规不含 Sony 专有文件（orbis-pub-cmd.exe / CONTENTS.zip 等），首次打包前请按 template/README.txt 自行补齐。'
+          $notes = $head
+
+          if (Test-Path 'CHANGELOG.md') {
+            $all = Get-Content 'CHANGELOG.md' -Raw -Encoding utf8
+            $pat = '(?ms)^##\s*\[' + [regex]::Escape($tag) + '\][^\r\n]*\r?\n(.*?)(?=^##\s*\[|\z)'
+            $m = [regex]::Match($all, $pat)
+            if ($m.Success) {
+              $link = 'https://github.com/' + $env:GITHUB_REPOSITORY + '/blob/' + $tag + '/CHANGELOG.md'
+              $notes = $head + "`n`n" + $m.Groups[1].Value.Trim() + "`n`n完整变更见 [CHANGELOG.md](" + $link + ')。'
+              Write-Host ('已引用 CHANGELOG.md 里 ' + $tag + ' 的章节作为更新说明')
+            } else {
+              Write-Host ('CHANGELOG.md 里没有 ' + $tag + ' 章节，使用默认说明')
+            }
+          } else {
+            Write-Host 'CHANGELOG.md 不存在，使用默认说明'
+          }
+
+          Set-Content -Path 'release-notes.md' -Value $notes -Encoding utf8
+          gh release create $tag $rel --title "PkgStudio $tag" --notes-file 'release-notes.md'
