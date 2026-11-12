@@ -130,6 +130,7 @@ namespace PkgStudio
                 //      no-trophy-trp    无论如何都不打包 TRP
                 //      force-trophy-trp 强制打包 TRP（对照实验用，危险）
                 int grps = CountTrophyGroupIcons(it.Trophy);
+                int npCommIds = CountNpCommIds(it.Npbind);
                 bool markerNoTrp = File.Exists(Path.Combine(templateDir, "no-trophy-trp"));
                 bool markerForceTrp = File.Exists(Path.Combine(templateDir, "force-trophy-trp"));
                 bool skipTrp;
@@ -138,6 +139,20 @@ namespace PkgStudio
                     skipTrp = true;
                     log("no-trophy-trp 标记：不打包 trophy00.trp");
                     Log.Write("no-trophy-trp: 手动标记生效，不打包 TRP");
+                }
+                else if (npCommIds > 1 && !markerForceTrp)
+                {
+                    // 合集类游戏：npbind 里挂多个 NPCOMMID，但主机上只有一个 TROPHY.TRP
+                    // （FtpSource 取的是第一个 commid 的）。包内 TRP 只覆盖第一个奖杯集，
+                    // 其余 commid 没有定义，系统启动/加载奖杯数据时会出问题 ——
+                    // 实测 CUSA06133（火影三部曲）这样出包后应用根本起不到 main。
+                    // 与已验证可用的 CUSA01399 保持一致：干脆不打包 TRP，
+                    // 全部走主机 /user/trophy/conf/ 里已有的定义（每个 commid 各一份）。
+                    skipTrp = true;
+                    log("npbind 有 " + npCommIds + " 个 NPCOMMID（合集）→ 自动不打包 trophy00.trp");
+                    log("包内 TRP 只覆盖第一个奖杯集，其余靠主机已有定义；包内可按 □ 切换");
+                    Log.Write("多 commid: npbind=" + npCommIds + " 个，自动 no-trophy-trp"
+                        + "（与 CUSA01399 一致，避免 TRP 只覆盖第一个 commid 导致启动异常）");
                 }
                 else if (grps > 0 && !markerForceTrp)
                 {
@@ -417,6 +432,32 @@ namespace PkgStudio
             }
 
             File.WriteAllText(path, string.Join("\r\n", lines) + "\r\n", new UTF8Encoding(false));
+            return n;
+        }
+
+        /// <summary>
+        /// 数 npbind.dat 里的 NPCOMMID 块数（合集类游戏 > 1）。
+        /// 与 WriteGamesCsv 同一套解析：132B 头 + N*384B 块，头 @0x1C 是大端块数。
+        /// 用途：多 commid 时不能只打包第一个 commid 的 TRP（见 skipTrp 判断）。
+        /// </summary>
+        private static int CountNpCommIds(byte[] d)
+        {
+            if (d == null || d.Length < 148)
+                return 0;
+
+            int blocks = (d[28] << 24) | (d[29] << 16) | (d[30] << 8) | d[31];
+            if (blocks < 1 || blocks > 8)
+                blocks = 1;
+
+            int n = 0;
+            for (int i = 0; i < blocks; i++)
+            {
+                int off = 132 + i * 384;
+                if (off + 17 > d.Length) break;
+                if (d[off] == (byte)'N' && d[off + 1] == (byte)'P'
+                    && d[off + 2] == (byte)'W' && d[off + 3] == (byte)'R')
+                    n++;
+            }
             return n;
         }
 

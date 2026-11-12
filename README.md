@@ -85,6 +85,12 @@ PkgStudio 右键游戏 →「解锁顺序表」，改完生成 PKG，表会随�
 解锁器读它、默认注册第一作。清单读不到时，启动阶段会依次探测 label `0..5` 及对应
 ASCII 值兜底，并把 `open` 的真实错误码写进日志。
 
+**打包规则**：`npbind` 里有多个 `NPCOMMID` 时，会自动**不打包** `trophy00.trp`。
+主机上只有一个 `TROPHY.TRP`（取的是第一个 commid 的），带进包也只覆盖第一个奖杯集，
+其余 commid 没有定义，实测会让应用起不到 `main`（CUSA06133 火影三部曲就是这样）。
+不打包 TRP 后，三个奖杯集都走主机 `/user/trophy/conf/` 里各自的定义，
+和已验证可用的 CUSA01399 一致。
+
 按 `□` 打开「选择奖杯集」面板，↑/↓ 选、X 确认，会切换 context、重数奖杯并刷新列表。
 每个奖杯集只在**第一次**选中时创建并注册 context，之后切换直接复用那对句柄 ——
 PS4 对同一个 NP Service Label 只允许存在一个 context，重复 `CreateContext` 会返回
