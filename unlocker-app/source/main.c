@@ -40,6 +40,7 @@
 #define ORDER_PATH "/app0/trophy_order.csv"
 #define ORDER_PATH2 "/app0/sce_sys/trophy_order.csv"
 #define FONT_PATH "/app0/font.ttf"
+#define GAMES_PATH "/app0/games.csv"
 #define NPBIND_PATH "/app0/sce_sys/npbind.dat"
 #define NPBIND_PATH2 "/app0/npbind.dat"
 #define MAX_TROPHIES 512
@@ -62,6 +63,7 @@ static np_game_t g_games[MAX_GAMES];
 static int       g_game_count;
 static int       g_game_cur;
 static uint32_t  g_label;
+static int       g_probe;        /* 清单和 npbind 都读不到时，启动时自动探测 label */
 
 static int32_t g_ctx = -1;
 static int32_t g_hdl = -1;
@@ -258,8 +260,14 @@ static int read_all(const char *path, char *buf, int cap)
     int fd = sceKernelOpen(path, O_RDONLY, 0);
     int total = 0;
 
-    if (fd < 0)
+    if (fd < 0) {
+        /* 记录真实错误码：npbind.dat 是受保护的系统文件，big app open 会失败 */
+        log_str("open fail: ");
+        log_str(path);
+        log_str(" -> ");
+        log_hex("", (uint32_t)fd);
         return -1;
+    }
 
     while (total < cap - 1) {
         long n = sceKernelRead(fd, buf + total, (size_t)(cap - 1 - total));
@@ -353,16 +361,91 @@ static void load_order(void)
                  +16 = service label 的 ASCII 数字（'0' / '1' / '2' / '3'）
      末尾 16B    校验，不算块
    普通游戏只有一块 label='0'；Uncharted 三部曲是 '1'/'2'/'3'（没有 0）。 */
+/* 优先读打包器生成的 /app0/games.csv。
+   npbind.dat 是受保护的系统文件：gp4 会把它打进 sce_sys/，系统 trophy 服务能读，
+   但 big app 运行时 open("/app0/sce_sys/npbind.dat") 会失败（实测 17:41 那个包），
+   所以由 PkgStudio 在打包时把 label + NPCOMMID 写成 app0 根目录的普通文本。 */
+static int parse_games_csv(void)
+{
+    static char buf[2048];
+    int got = read_all(GAMES_PATH, buf, sizeof(buf));
+    char *p = buf;
+    int n = 0;
+
+    if (got < 0)
+        return 0;
+
+    while (*p && n < MAX_GAMES) {
+        char *line = p, *c1, *c2;
+        int label, ascii, i;
+
+        while (*p && *p != '\n')
+            p++;
+        if (*p == '\n')
+            *p++ = 0;
+        for (i = 0; line[i]; i++) {
+            if (line[i] == '\r') {
+                line[i] = 0;
+                break;
+            }
+        }
+
+        if (line[0] == '#' || line[0] == 0)
+            continue;
+        c1 = strchr(line, ',');
+        if (!c1)
+            continue;
+        c2 = strchr(c1 + 1, ',');
+        if (!c2)
+            continue;
+
+        label = atoi_simple(line);
+        ascii = atoi_simple(c1 + 1);
+        if (label < 0 || label > 255 || ascii < 0 || ascii > 255)
+            continue;
+
+        memset(&g_games[n], 0, sizeof(g_games[0]));
+        g_games[n].label = (uint32_t)label;
+        g_games[n].label_ascii = (uint32_t)ascii;
+        strncpy(g_games[n].commid, c2 + 1, sizeof(g_games[0].commid) - 1);
+        g_games[n].commid[sizeof(g_games[0].commid) - 1] = 0;
+        n++;
+    }
+
+    return n;
+}
+
+/* 实测格式（CUSA01399 / CUSA00066 / CUSA02104）：
+     0x00..0x83  文件头，@0x1C 是大端块数（1 / 2 / 3）
+     0x84 起     每块 384B：+0 = "NPWRxxxxx_00"，+12 = 00 11 00 0c，
+                 +16 = service label 的 ASCII 数字（'0' / '1' / '2' / '3'）
+     末尾 16B    校验，不算块
+   普通游戏只有一块 label='0'；Uncharted 三部曲是 '1'/'2'/'3'（没有 0）。 */
 static void parse_npbind(void)
 {
     static unsigned char buf[8192];
-    int got = read_all(NPBIND_PATH, (char *)buf, sizeof(buf));
+    int got;
     int blocks = 0;
+    int n;
 
     g_game_count = 0;
     g_game_cur = 0;
     g_label = 0;
+    g_probe = 0;
 
+    n = parse_games_csv();
+    if (n > 0) {
+        g_game_count = n;
+        log_int("games.csv games ", n);
+        for (int i = 0; i < n; i++)
+            log_line("game %d = %s label=%u ascii=0x%02x", i,
+                     g_games[i].commid, (unsigned)g_games[i].label,
+                     (unsigned)g_games[i].label_ascii);
+        return;
+    }
+
+    log_str("games.csv 读不到，回退解析 npbind.dat\n");
+    got = read_all(NPBIND_PATH, (char *)buf, sizeof(buf));
     if (got < 0)
         got = read_all(NPBIND_PATH2, (char *)buf, sizeof(buf));
 
@@ -395,16 +478,19 @@ static void parse_npbind(void)
                      (unsigned)lab, (unsigned)c);
         }
     } else {
-        log_str("npbind: 读不到文件，按单奖杯集 label=0 处理\n");
+        log_str("npbind: 读不到文件\n");
     }
 
     if (g_game_count == 0) {
-        /* 解析不出来也不能让程序起不来：退回原来的「只有一个、label=0」 */
+        /* 两个来源都读不到（旧包 / 精简模板）：不知道有哪些 label，
+           启动时让 register_game 依次探测 0..5 与 ASCII 值，找到能注册的就用，
+           UI 按单个奖杯集显示，不会再卡死在写死的 label 0。 */
         memset(&g_games[0], 0, sizeof(g_games[0]));
-        strcpy(g_games[0].commid, "single");
+        strcpy(g_games[0].commid, "auto");
         g_games[0].label_ascii = '0';
         g_game_count = 1;
-        log_str("npbind: 没解析出 commid，按单奖杯集处理\n");
+        g_probe = 1;
+        log_str("清单与 npbind 都读不到，启动时自动探测 service label\n");
     }
 
     log_int("npbind games ", g_game_count);
@@ -552,21 +638,31 @@ static int try_label(uint32_t label)
    verbose=1 是启动注册（保留 6 次重试应对间歇的 0x805516f4）。 */
 static int register_game(int idx, int verbose)
 {
-    uint32_t cand[3];
+    uint32_t cand[16];
     int nc = 0, last = -1;
     char msg[192];
 
     if (idx < 0 || idx >= g_game_count)
         return -1;
 
-    cand[nc++] = g_games[idx].label;
-    if (g_games[idx].label_ascii != cand[0])
-        cand[nc++] = g_games[idx].label_ascii;
-    if (cand[0] != 0 && g_games[idx].label_ascii != 0)
-        cand[nc++] = 0;
+    if (g_probe && verbose) {
+        /* 没有任何清单：依次探测常见 label（数值 0..5 + 对应 ASCII 值），
+           第一个能注册成功的生效。只在启动时做，切换仍走正常候选。 */
+        for (uint32_t l = 0; l < 6; l++)
+            cand[nc++] = l;
+        for (uint32_t l = 0; l < 6; l++)
+            cand[nc++] = (uint32_t)('0' + l);
+        log_str("probe: 无清单，逐个尝试 service label\n");
+    } else {
+        cand[nc++] = g_games[idx].label;
+        if (g_games[idx].label_ascii != cand[0])
+            cand[nc++] = g_games[idx].label_ascii;
+        if (cand[0] != 0 && g_games[idx].label_ascii != 0)
+            cand[nc++] = 0;
+    }
 
     for (int c = 0; c < nc; c++) {
-        int tries = (c == 0 && verbose) ? 6 : 1;
+        int tries = (c == 0 && verbose && !g_probe) ? 6 : 1;
 
         for (int a = 1; a <= tries; a++) {
             last = try_label(cand[c]);
