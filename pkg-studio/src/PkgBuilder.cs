@@ -245,6 +245,19 @@ namespace PkgStudio
                     log("警告：template 缺 font.ttf，界面起不来，请用最新版工具目录");
                 }
 
+                // 4.7b 奖杯集清单（合集类游戏的关键）。
+                // npbind.dat 是受保护的系统文件：gp4 会把它打进 sce_sys/，系统 trophy
+                // 服务能读，但 big app 运行时 open("/app0/sce_sys/npbind.dat") 会失败。
+                // 所以打包时在这里把 label + NPCOMMID 解析成普通文本放 /app0 根目录，
+                // 解锁器从 /app0/games.csv 读（和 font.ttf / trophy_order.csv 一样可读）。
+                bool hasGames = useCustom;
+                if (hasGames)
+                {
+                    int n = WriteGamesCsv(it.Npbind, Path.Combine(target, "games.csv"));
+                    Log.Write("奖杯集清单: " + n + " 个（games.csv）");
+                    log("奖杯集清单: " + n + " 个");
+                }
+
                 // 4.8 图标：用游戏自己的 icon0.png 当底图，中间叠一个奖杯图标。
                 //     gp4 里本来就有 sce_sys/icon0.png 条目，直接覆盖文件即可。
                 string overlayPath = Path.Combine(templateDir, "icon1.png");
@@ -288,7 +301,7 @@ namespace PkgStudio
                     Log.Write("no-trophy-trp: 已从 gp4 移除 sce_sys/trophy/trophy00.trp");
                 }
 
-                if ((hasOrder || hasFont) && xml.IndexOf("</files>", StringComparison.Ordinal) > 0)
+                if ((hasOrder || hasFont || hasGames) && xml.IndexOf("</files>", StringComparison.Ordinal) > 0)
                 {
                     StringBuilder extra = new StringBuilder();
 
@@ -296,6 +309,8 @@ namespace PkgStudio
                         extra.Append("    <file targ_path=\"trophy_order.csv\" orig_path=\"CONTENTS\\trophy_order.csv\" />\r\n");
                     if (hasFont)
                         extra.Append("    <file targ_path=\"font.ttf\" orig_path=\"CONTENTS\\font.ttf\" />\r\n");
+                    if (hasGames)
+                        extra.Append("    <file targ_path=\"games.csv\" orig_path=\"CONTENTS\\games.csv\" />\r\n");
 
                     xml = xml.Replace("</files>", extra.ToString() + "  </files>");
                 }
@@ -357,6 +372,52 @@ namespace PkgStudio
                 throw new Exception("gp4 的 content_id 格式异常");
 
             return xml.Substring(0, start) + newContentId + xml.Substring(end);
+        }
+
+        /// <summary>
+        /// 把 npbind.dat 里的 service label + NPCOMMID 写成 app0 根目录可读的 games.csv。
+        ///
+        /// npbind = 132B 头 + N*384B 块 + 16B 尾；头 @0x1C 是大端块数，
+        /// 块 +0 = "NPWRxxxxx_00"(12B)，+16 = ASCII 数字的 NP Service Label。
+        /// 单奖杯集游戏是 '0'；Uncharted 合集是 '1'/'2'/'3'（没有 0）。
+        /// CSV 每行：label,label_ascii,npcommid；'#' 开头是注释。
+        /// 解析不出任何块时写一行 "0,48,single" 兜底，保证解锁器行为与旧版一致。
+        /// </summary>
+        private static int WriteGamesCsv(byte[] d, string path)
+        {
+            var lines = new List<string>();
+            lines.Add("# label,label_ascii,npcommid");
+            int n = 0;
+
+            if (d != null && d.Length >= 148)
+            {
+                int blocks = (d[28] << 24) | (d[29] << 16) | (d[30] << 8) | d[31];
+                if (blocks < 1 || blocks > 8) blocks = 1;
+
+                for (int i = 0; i < blocks; i++)
+                {
+                    int off = 132 + i * 384;
+                    if (off + 17 > d.Length) break;
+                    if (d[off] != (byte)'N' || d[off + 1] != (byte)'P'
+                        || d[off + 2] != (byte)'W' || d[off + 3] != (byte)'R')
+                        continue;
+
+                    byte c = d[off + 16];
+                    int label = (c >= (byte)'0' && c <= (byte)'9') ? c - (byte)'0' : i;
+                    string commid = Encoding.ASCII.GetString(d, off, 12).TrimEnd('\0');
+                    lines.Add(label + "," + (int)c + "," + commid);
+                    n++;
+                }
+            }
+
+            if (n == 0)
+            {
+                lines.Add("0,48,single");
+                n = 1;
+            }
+
+            File.WriteAllText(path, string.Join("\r\n", lines) + "\r\n", new UTF8Encoding(false));
+            return n;
         }
 
         /// <summary>

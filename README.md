@@ -79,8 +79,13 @@ PkgStudio 右键游戏 →「解锁顺序表」，改完生成 PKG，表会随�
 `sceNpTrophyCreateContext` 的第 3 个参数就是它 —— 写死 `0` 时，只有 label
 `1/2/3` 的合集会稳定返回 `0x80551626`（请求了不存在的 label）。
 
-解锁器启动时解析 `/app0/sce_sys/npbind.dat`，默认注册第一作；按 `□` 打开
-「选择奖杯集」面板，↑/↓ 选、X 确认，会重新注册 context、重数奖杯并刷新列表。
+`npbind.dat` 是受保护的系统文件：gp4 会把它打进 `sce_sys/`，系统 trophy 服务能读，
+但 big app 运行时 `open("/app0/sce_sys/npbind.dat")` 会失败。因此 PkgStudio 在打包时
+就把解析结果写成 app0 根目录的 `/app0/games.csv`（每行 `label,label_ascii,NPCOMMID`），
+解锁器读它、默认注册第一作。清单读不到时，启动阶段会依次探测 label `0..5` 及对应
+ASCII 值兜底，并把 `open` 的真实错误码写进日志。
+
+按 `□` 打开「选择奖杯集」面板，↑/↓ 选、X 确认，会重新注册 context、重数奖杯并刷新列表。
 只在用户选中时才注册（不会一次把所有奖杯集都注册一遍，避免在奖杯库留空记录），
 旧 context 不主动销毁、交给系统回收。列表顶部会显示当前是第几个奖杯集及其 NPCOMMID。
 
