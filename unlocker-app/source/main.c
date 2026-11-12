@@ -57,6 +57,10 @@ typedef struct {
     uint32_t label;          /* 数值型：'3' -> 3 */
     uint32_t label_ascii;    /* 兜底：万一内部按 ASCII 取，试 0x33 */
     char     commid[16];     /* NPWRxxxxx_00，UI 上用来区分是哪一作 */
+    int32_t  ctx;            /* 注册成功后保存的 context，切换时复用 */
+    int32_t  hdl;
+    uint32_t active_label;   /* 实际注册成功的 label（候选里可能不是第一个） */
+    int      ready;
 } np_game_t;
 
 static np_game_t g_games[MAX_GAMES];
@@ -407,6 +411,8 @@ static int parse_games_csv(void)
         memset(&g_games[n], 0, sizeof(g_games[0]));
         g_games[n].label = (uint32_t)label;
         g_games[n].label_ascii = (uint32_t)ascii;
+        g_games[n].ctx = -1;
+        g_games[n].hdl = -1;
         strncpy(g_games[n].commid, c2 + 1, sizeof(g_games[0].commid) - 1);
         g_games[n].commid[sizeof(g_games[0].commid) - 1] = 0;
         n++;
@@ -471,6 +477,8 @@ static void parse_npbind(void)
             memset(&g_games[g_game_count], 0, sizeof(g_games[0]));
             g_games[g_game_count].label = lab;
             g_games[g_game_count].label_ascii = (uint32_t)c;
+            g_games[g_game_count].ctx = -1;
+            g_games[g_game_count].hdl = -1;
             memcpy(g_games[g_game_count].commid, buf + off, 12);
             g_game_count++;
             log_line("npbind game %d = %s label=%u ascii=0x%02x",
@@ -488,6 +496,8 @@ static void parse_npbind(void)
         memset(&g_games[0], 0, sizeof(g_games[0]));
         strcpy(g_games[0].commid, "auto");
         g_games[0].label_ascii = '0';
+        g_games[0].ctx = -1;
+        g_games[0].hdl = -1;
         g_game_count = 1;
         g_probe = 1;
         log_str("清单与 npbind 都读不到，启动时自动探测 service label\n");
@@ -645,6 +655,19 @@ static int register_game(int idx, int verbose)
     if (idx < 0 || idx >= g_game_count)
         return -1;
 
+    /* 已经注册过的奖杯集：直接复用当时那对 context/handle，不再重新创建。
+       PS4 对同一个 service label 只允许存在一个 context —— 切回去再
+       CreateContext 会返回 0x80551613（实测 1→2→3 之后切回 1 必失败）。 */
+    if (g_games[idx].ready) {
+        g_ctx = g_games[idx].ctx;
+        g_hdl = g_games[idx].hdl;
+        g_label = g_games[idx].active_label;
+        g_game_cur = idx;
+        log_int("reuse game ", idx);
+        log_hex("reuse label ", g_label);
+        return 0;
+    }
+
     if (g_probe && verbose) {
         /* 没有任何清单：依次探测常见 label（数值 0..5 + 对应 ASCII 值），
            第一个能注册成功的生效。只在启动时做，切换仍走正常候选。 */
@@ -668,8 +691,13 @@ static int register_game(int idx, int verbose)
             last = try_label(cand[c]);
             if (last == 0) {
                 g_game_cur = idx;
+                g_games[idx].ctx = g_ctx;
+                g_games[idx].hdl = g_hdl;
+                g_games[idx].active_label = g_label;
+                g_games[idx].ready = 1;
                 log_int("active game ", idx);
                 log_hex("active label ", g_label);
+                log_int("saved ctx ", g_ctx);
                 return 0;
             }
 
