@@ -12,11 +12,11 @@ namespace PkgStudio
     {
         private DataGridView grid;
         private ListView outputs;
-        private ToolStripTextBox txtHost;
-        private ToolStripTextBox txtOut;
-        private ToolStripTextBox txtTpl;
+        private TextBox txtHost;
+        private TextBox txtOut;
         private ToolStripStatusLabel lblStatus;
-        private ToolStripButton btnBuild;
+        private Button btnBuild;
+        private readonly ToolTip tips = new ToolTip();
 
         private readonly List<GameItem> items = new List<GameItem>();
         private readonly string workRoot;
@@ -33,6 +33,10 @@ namespace PkgStudio
             Font = new Font("Microsoft YaHei UI", 9f);
 
             BuildUi();
+
+            // 默认输出目录（exe 同目录的 PKG）启动时就建好，第一次打包不用手建
+            try { Directory.CreateDirectory(ResolveOutDir(txtOut.Text)); }
+            catch (Exception ex) { Log.Write("创建默认输出目录失败: " + ex.Message); }
 
             // 导入缓存目录只留最近两周，避免越滚越大
             Task.Run(new Action(CleanupCache));
@@ -70,16 +74,34 @@ namespace PkgStudio
         {
             get
             {
-                string t = txtTpl.Text.Trim();
-                if (t.Length > 0 && Directory.Exists(t))
-                    return t;
-
+                // 模板固定用 exe 同目录的 template，不再提供手动修改：
+                // 相对路径跟着程序走，换机器/换目录都不会失效
                 string def = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "template");
                 if (Directory.Exists(def))
                     return def;
 
                 return AppDomain.CurrentDomain.BaseDirectory;
             }
+        }
+
+        /// <summary>默认输出目录：exe 同目录下的 PKG（启动时就建好）。</summary>
+        private static string DefaultOutDir
+        {
+            get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PKG"); }
+        }
+
+        /// <summary>
+        /// 把输入框里的内容变成可用的绝对路径：空 = 默认 PKG 目录；
+        /// 相对路径按 exe 所在目录展开，避免用户写「PKG」时落到当前工作目录。
+        /// </summary>
+        private static string ResolveOutDir(string raw)
+        {
+            string t = (raw ?? "").Trim().Trim('"');
+            if (t.Length == 0)
+                t = DefaultOutDir;
+            if (!Path.IsPathRooted(t))
+                t = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, t);
+            return t;
         }
 
         private string OrbisExe
@@ -89,52 +111,8 @@ namespace PkgStudio
 
         private void BuildUi()
         {
-            // ---- 顶部工具条 ----
-            ToolStrip bar = new ToolStrip();
-            bar.GripStyle = ToolStripGripStyle.Hidden;
-            bar.Padding = new Padding(6, 4, 6, 4);
-
-            ToolStripButton btnImport = new ToolStripButton("导入 PKG...");
-            btnImport.Click += OnImportClick;
-
-            ToolStripButton btnClear = new ToolStripButton("清除列表");
-            btnClear.Click += delegate { ClearList(); };
-
-            ToolStripButton btnFtp = new ToolStripButton("扫描 FTP");
-            btnFtp.Click += OnScanFtpClick;
-
-            txtHost = new ToolStripTextBox();
-            txtHost.Width = 120;
-            txtHost.Text = "192.168.1.10";
-            txtHost.ToolTipText = "PS4 的 IP（GoldHEN FTP 端口 2121）";
-
-            ToolStripLabel lblOut = new ToolStripLabel("输出：");
-            txtOut = new ToolStripTextBox();
-            txtOut.Width = 240;
-            txtOut.Text = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "PKG_Out");
-            ToolStripButton btnOut = new ToolStripButton("...");
-            btnOut.Click += delegate { PickFolder(txtOut); };
-
-            ToolStripLabel lblTpl = new ToolStripLabel("模板：");
-            txtTpl = new ToolStripTextBox();
-            txtTpl.Width = 200;
-            txtTpl.Text = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "template");
-            ToolStripButton btnTpl = new ToolStripButton("...");
-            btnTpl.Click += delegate { PickFolder(txtTpl); };
-
-            btnBuild = new ToolStripButton("生成 PKG");
-            btnBuild.Font = new Font(btnBuild.Font, FontStyle.Bold);
-            btnBuild.Click += OnBuildClick;
-
-            bar.Items.AddRange(new ToolStripItem[]
-            {
-                btnImport, btnClear, new ToolStripSeparator(),
-                btnFtp, txtHost, new ToolStripSeparator(),
-                lblOut, txtOut, btnOut, new ToolStripSeparator(),
-                lblTpl, txtTpl, btnTpl, new ToolStripSeparator(),
-                btnBuild
-            });
+            // ---- 顶部工具条（改成两行：普通按钮 + 可编辑的路径框） ----
+            Panel bar = BuildTopBar();
 
             // ---- 左：游戏列表 ----
             grid = new DataGridView();
@@ -225,6 +203,162 @@ namespace PkgStudio
             DragDrop += GridDragDrop;
         }
 
+        /// <summary>
+        /// 顶部两条：第一行放动作（导入 / 清除 / 扫描 FTP），第二行放输出目录。
+        /// 原来挤在一个 ToolStrip 里，窗口一窄后面的项就掉进溢出菜单，
+        /// 输出路径框点不进去也改不动，所以改成普通控件 + 真按钮。
+        /// </summary>
+        private Panel BuildTopBar()
+        {
+            Panel bar = new Panel();
+            bar.Dock = DockStyle.Top;
+            bar.Height = 96;
+            bar.BackColor = Color.FromArgb(247, 249, 252);
+            bar.Padding = new Padding(12, 10, 12, 8);
+
+            // ---- 第一行 ----
+            FlowLayoutPanel row1 = new FlowLayoutPanel();
+            row1.Dock = DockStyle.Top;
+            row1.Height = 36;
+            row1.WrapContents = false;
+            row1.AutoScroll = false;
+
+            Button btnImport = MakeButton("导入 PKG…");
+            btnImport.Click += OnImportClick;
+
+            Button btnClear = MakeButton("清除列表");
+            btnClear.Click += delegate { ClearList(); };
+
+            Button btnFtp = MakeButton("扫描 FTP");
+            btnFtp.Click += OnScanFtpClick;
+
+            Label lblHost = MakeLabel("PS4 IP");
+            txtHost = MakeText("192.168.1.10", 130);
+            tips.SetToolTip(txtHost, "PS4 的 IP（GoldHEN FTP 端口 2121）");
+
+            row1.Controls.Add(btnImport);
+            row1.Controls.Add(btnClear);
+            row1.Controls.Add(MakeSep());
+            row1.Controls.Add(lblHost);
+            row1.Controls.Add(txtHost);
+            row1.Controls.Add(btnFtp);
+
+            // ---- 第二行 ----
+            TableLayoutPanel row2 = new TableLayoutPanel();
+            row2.Dock = DockStyle.Top;
+            row2.Height = 38;
+            row2.ColumnCount = 4;
+            row2.RowCount = 1;
+            row2.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row2.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            row2.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row2.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            Label lblOut = MakeLabel("输出目录");
+            txtOut = MakeText(DefaultOutDir, 10);
+            txtOut.Dock = DockStyle.Fill;
+            txtOut.Margin = new Padding(0, 5, 8, 0);
+            tips.SetToolTip(txtOut, "生成的 pkg 放在这里，默认是 exe 同目录下的 PKG 文件夹（可改）");
+
+            Button btnOut = MakeButton("浏览..");
+            btnOut.Click += OnPickOutClick;
+            tips.SetToolTip(btnOut, "选择输出文件夹");
+
+            btnBuild = MakeButton("生成 PKG", true);
+            btnBuild.Click += OnBuildClick;
+
+            row2.Controls.Add(lblOut, 0, 0);
+            row2.Controls.Add(txtOut, 1, 0);
+            row2.Controls.Add(btnOut, 2, 0);
+            row2.Controls.Add(btnBuild, 3, 0);
+
+            // Dock=Top 后加的在上，所以先加第二行
+            bar.Controls.Add(row2);
+            bar.Controls.Add(row1);
+            return bar;
+        }
+
+        private static Button MakeButton(string text, bool primary = false)
+        {
+            Button b = new Button();
+            b.Text = text;
+            b.AutoSize = true;
+            b.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            b.MinimumSize = new Size(0, 30);
+            b.Padding = new Padding(14, 2, 14, 2);
+            b.Margin = new Padding(0, 0, 8, 0);
+            b.FlatStyle = FlatStyle.Flat;
+            b.FlatAppearance.BorderSize = 1;
+            b.UseVisualStyleBackColor = false;
+            b.Cursor = Cursors.Hand;
+
+            if (primary)
+            {
+                b.BackColor = Color.FromArgb(47, 111, 237);
+                b.ForeColor = Color.White;
+                b.Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold);
+                b.FlatAppearance.BorderColor = Color.FromArgb(36, 92, 205);
+                b.FlatAppearance.MouseOverBackColor = Color.FromArgb(62, 126, 246);
+                b.FlatAppearance.MouseDownBackColor = Color.FromArgb(33, 86, 194);
+                b.Margin = new Padding(4, 0, 0, 0);
+            }
+            else
+            {
+                b.BackColor = Color.White;
+                b.ForeColor = Color.FromArgb(32, 38, 48);
+                b.FlatAppearance.BorderColor = Color.FromArgb(196, 202, 212);
+                b.FlatAppearance.MouseOverBackColor = Color.FromArgb(236, 241, 249);
+                b.FlatAppearance.MouseDownBackColor = Color.FromArgb(214, 224, 240);
+            }
+
+            return b;
+        }
+
+        private static Label MakeLabel(string text)
+        {
+            Label l = new Label();
+            l.Text = text;
+            l.AutoSize = true;
+            l.ForeColor = Color.FromArgb(72, 80, 92);
+            l.Margin = new Padding(0, 8, 7, 0);
+            return l;
+        }
+
+        private static TextBox MakeText(string text, int width)
+        {
+            TextBox t = new TextBox();
+            t.Text = text;
+            t.Width = width;
+            t.BorderStyle = BorderStyle.FixedSingle;
+            t.Margin = new Padding(0, 5, 8, 0);
+            t.Font = new Font("Microsoft YaHei UI", 9f);
+            return t;
+        }
+
+        private static Panel MakeSep()
+        {
+            Panel p = new Panel();
+            p.Width = 1;
+            p.Height = 22;
+            p.BackColor = Color.FromArgb(210, 216, 226);
+            p.Margin = new Padding(6, 6, 14, 0);
+            return p;
+        }
+
+        private void OnPickOutClick(object sender, EventArgs e)
+        {
+            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+            {
+                dlg.Description = "选择 pkg 输出目录";
+                dlg.ShowNewFolderButton = true;
+                string cur = ResolveOutDir(txtOut.Text);
+                if (Directory.Exists(cur))
+                    dlg.SelectedPath = cur;
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                    txtOut.Text = dlg.SelectedPath;
+            }
+        }
+
         private static DataGridViewTextBoxColumn MakeCol(string header, int width, int fill)
         {
             DataGridViewTextBoxColumn c = new DataGridViewTextBoxColumn();
@@ -277,9 +411,7 @@ namespace PkgStudio
                 return;
             }
 
-            string dir = txtOut.Text.Trim();
-            if (dir.Length == 0)
-                dir = AppDomain.CurrentDomain.BaseDirectory;
+            string dir = ResolveOutDir(txtOut.Text);
             Directory.CreateDirectory(dir);
 
             // 放在输出目录：打包时会自动写进 pkg 的 /app0/trophy_order.csv
@@ -596,13 +728,22 @@ namespace PkgStudio
                 return;
             }
 
-            string outDir = txtOut.Text.Trim();
+            string outDir = ResolveOutDir(txtOut.Text);
             if (outDir.Length == 0)
             {
                 MessageBox.Show("先设置输出路径", "生成 PKG");
                 return;
             }
-            Directory.CreateDirectory(outDir);
+            try
+            {
+                Directory.CreateDirectory(outDir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("输出目录建不出来：\r\n" + outDir + "\r\n\r\n" + ex.Message,
+                    "生成 PKG", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
             SetBusy(true, "开始打包…");
             int ok = 0, skip = 0, fail = 0;
@@ -676,17 +817,6 @@ namespace PkgStudio
         }
 
         // ---------------- 杂项 ----------------
-
-        private void PickFolder(ToolStripTextBox box)
-        {
-            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
-            {
-                if (Directory.Exists(box.Text))
-                    dlg.SelectedPath = box.Text;
-                if (dlg.ShowDialog() == DialogResult.OK)
-                    box.Text = dlg.SelectedPath;
-            }
-        }
 
         private void SetBusy(bool busy, string message)
         {

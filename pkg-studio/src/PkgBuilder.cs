@@ -531,23 +531,47 @@ namespace PkgStudio
             return best;
         }
 
+        /// <summary>
+        /// 把游戏标题变成合法的 Windows 文件名，但**保留中文/日文等非英文字符**。
+        /// 以前是「只留 A-Z0-9 空格 - _」，结果中文标题全被吞掉，出来的包名只剩 Title ID。
+        /// 现在只处理 Windows 不允许的 9 个字符，并把它们换成对应的全角字符
+        /// （例如 Uncharted: xxx → Uncharted：xxx），信息不丢、文件也能建。
+        /// </summary>
         public static string SafeName(string title)
         {
-            StringBuilder sb = new StringBuilder();
-            if (!string.IsNullOrEmpty(title))
+            if (string.IsNullOrEmpty(title))
+                return "Unlocker";
+
+            StringBuilder sb = new StringBuilder(title.Length);
+            foreach (char c in title)
             {
-                foreach (char c in title)
+                switch (c)
                 {
-                    if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-                        || c == ' ' || c == '-' || c == '_')
-                        sb.Append(c);
-                    else if (char.IsWhiteSpace(c))
-                        sb.Append(' ');
+                    case '\\': sb.Append('＼'); continue;
+                    case '/': sb.Append('／'); continue;
+                    case ':': sb.Append('：'); continue;
+                    case '*': sb.Append('＊'); continue;
+                    case '?': sb.Append('？'); continue;
+                    case '"': sb.Append('＂'); continue;
+                    case '<': sb.Append('＜'); continue;
+                    case '>': sb.Append('＞'); continue;
+                    case '|': sb.Append('｜'); continue;
                 }
+
+                if (char.IsControl(c))
+                    continue;
+                sb.Append(char.IsWhiteSpace(c) ? ' ' : c);
             }
-            string s = sb.ToString().Trim();
-            while (s.Contains("  ")) s = s.Replace("  ", " ");
-            if (s.Length > 60) s = s.Substring(0, 60).Trim();
+
+            string s = sb.ToString();
+            while (s.Contains("  "))
+                s = s.Replace("  ", " ");
+            s = s.Trim().TrimEnd('.', ' ');
+
+            // 给 "标题_ID.pkg" 留出余量，避免总路径过 MAX_PATH
+            if (s.Length > 80)
+                s = s.Substring(0, 80).TrimEnd('.', ' ', '　');
+
             return s.Length == 0 ? "Unlocker" : s;
         }
 

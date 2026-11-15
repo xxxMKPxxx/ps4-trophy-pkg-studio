@@ -14,9 +14,13 @@
 - 左侧表格：把游戏 `pkg` **直接拖进来**（支持多选）或点「导入 PKG」，自动解包并读 `param.sfo`
 - 按 `CATEGORY` 分类：`gd` = 游戏（可打包）、`gp` = 更新、`ac` = DLC。
   后两种会标红并注明「不可用」，因为奖杯包只能从本体生成
-- 顶部可设输出目录和模板目录；「扫描 FTP」把 PS4 上的游戏以同一张表列出
+- 输出目录默认是 **exe 同目录下的 `PKG` 文件夹**（启动即建好），可点「浏览..」改；
+  模板固定用 exe 同目录的 `template/`，不提供手动修改，换目录/换机器都不会失效
+- 「扫描 FTP」把 PS4 上的游戏以同一张表列出
   （同时识别 `CUS*` 游戏与 `XDPX*` 旧解锁器 —— **旧解锁器可直接当提取源再出新包**，
   原游戏 PKG 删了也不用重新下载）
+- 打包出的 pkg 文件名保留中文/日文等非英文字符（只把 Windows 不允许的
+  `\ / : * ? " < > |` 换成全角，信息不丢）
 - 打包只做**等长就地替换**（`TITLE_ID` 9 字符、`CONTENT_ID` 里的同段 9 字符），
   不重建 param.sfo 结构 —— 整体重写会导致 PS4 拒装（CE-34629）
 - **多组 DLC 奖杯保护**：自动统计 TRP 里的奖杯组数（`GRxxx.PNG` 图标），单组游戏正常
@@ -26,11 +30,12 @@
 - 顺序表文件按 `trophy_order_<TITLE_ID>.csv` 命名放在输出目录即随包打入
 
 构建：`.github/workflows/studio.yml` 在 `windows-latest` 上编译，并把上游
-`TrophyUnlocker/Resources` 的 `.gp4` 工程与 `icon1.png` 等复制到产物目录的 `template/` 下。
-**`orbis-pub-cmd.exe` 与 `CONTENTS.zip`（Sony SDK 专有文件）不随本仓库的产物分发**，
-首次使用请按产物里 `template/README.txt` 的指引自行从上游
-[PS4_Tools](https://github.com/xXxTheDarkprogramerxXx/PS4_Tools) 仓库获取并放入 `template/`。
-下载 artifact **PkgStudio** 即可开始。
+`TrophyUnlocker/Resources` 的 `.gp4` 工程、`orbis-pub-cmd.exe`、`CONTENTS.zip`
+与 `icon1.png` 等复制到产物目录的 `template/` 下。
+**发布的 zip 是完整版**，解压即可打包，不需要再自己找 Sony 的模板文件
+（这些文件来自上游 [PS4_Tools](https://github.com/xXxTheDarkprogramerxXx/PS4_Tools) 的
+`TrophyUnlocker/Resources`，仓库源码本身不含）。
+下载 Release 里的 `PkgStudio-v*.zip` 即可开始。
 
 ## `unlocker-app/` —— 解锁器本体（C，随 PKG 走）
 
@@ -113,8 +118,10 @@ OTF→TTF 转换时曾丢掉箭头与几何符号区，现已把 `↑ ↓ → �
   `img_create` 以 `unexpected Application Version` 拒绝。标题空间不够时按 UTF-8
   字符边界裁剪，不会出现半个汉字。
 - **图标**：用游戏自己的 `icon0.png` 作底图，中间叠透明奖杯图标（`template/icon1.png`），
-  输出 512×512 不带 alpha 的 PNG。本地 PKG 直接从条目表取 `ICON0_PNG`，FTP 导入则在打包时
-  从 `appmeta/<TITLE_ID>/icon0.png` 下载；取不到时退回模板自带图标
+  输出 512×512 不带 alpha 的 PNG。本地 PKG 直接从条目表取 `ICON0_PNG`；FTP 导入则在打包时
+  按 `/user/appmeta/<TITLE_ID>/icon0.png`、`/user/appmeta/external/<TITLE_ID>/icon0.png`、
+  `/mnt/ext0|ext1|usb0|usb1/user/appmeta[/external]/<TITLE_ID>/icon0.png` 依次找
+  （`appmeta` 里只有 `npbind/nptitle`，图标不在那儿）；全都没有（光盘版 / 从未启动过）时退回模板图标
 
 ## `trophy-unlocker-patch/` —— 给上游 TrophyUnlocker 的补丁（历史方案）
 
@@ -158,8 +165,7 @@ artifact **TrophyUnlocker**（整个 `bin\Release` 目录，含运行时依赖 D
   by [xXxTheDarkprogramerxXx](https://github.com/xXxTheDarkprogramerxXx)
   —— `trophy-unlocker-patch` 的补丁对象（TrophyUnlocker 即出自该项目）；
   其 `TrophyUnlocker/Resources`（`CONTENTS.zip`、`.gp4` 工程、`orbis-pub-cmd.exe`）
-  是本工具打包模板的来源。**`orbis-pub-cmd` 为 Sony SDK 专有工具，本仓库不分发**，
-  请从上游仓库获取。
+  是本工具打包模板的来源，随 Release 的完整包一并提供；仓库源码本身不含这些文件。
 - **[OpenOrbis PS4 Toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain)**
   —— `unlocker-app` 的编译工具链（clang/lld 交叉编译、`create-fself` 生成 SCE ELF、
   官方 stub 链接方式）。
@@ -175,4 +181,4 @@ artifact **TrophyUnlocker**（整个 `bin\Release` 目录，含运行时依赖 D
 ## License
 
 MIT，见 [LICENSE](LICENSE)。其中引用/衍生自上游项目的组件遵循其原许可证；
-`orbis-pub-cmd` 等 Sony SDK 工具不在本仓库分发范围内。
+`orbis-pub-cmd` 等 Sony SDK 工具仅随 Release 的完整包提供，不在本仓库源码范围内。

@@ -97,23 +97,9 @@ jobs:
 
           Get-ChildItem "$out" -Filter *.dll | Select-Object Name, Length | Format-Table
 
-          # 公开发布合规：orbis-pub-cmd.exe（Sony SDK 专有工具）与 CONTENTS.zip
-          # （内含 Sony SDK 官方 np_trophy sample eboot）不随本仓库产物分发。
-          # 使用者按 template/README.txt 指引自行从上游 PS4_Tools 获取。
-          Remove-Item "$out\template\orbis-pub-cmd.exe" -Force -ErrorAction SilentlyContinue
-          Remove-Item "$out\template\CONTENTS.zip" -Force -ErrorAction SilentlyContinue
-          # 注意：不要在这里用 PowerShell here-string —— 其结束符 '@ 必须顶格，
-          # 会提前终止 YAML 块标量导致整个 workflow 解析失败。
-          $readme = @(
-            '本仓库不分发 Sony SDK 专有文件（orbis-pub-cmd.exe、CONTENTS.zip）。',
-            '',
-            '首次使用前请自行获取并放入本 template 目录（与 README.txt 同级）：',
-            '  1. git clone https://github.com/xXxTheDarkprogramerxXx/PS4_Tools.git',
-            '  2. 复制 PS4_Tools\TrophyUnlocker\Resources\ 下的 CONTENTS.zip、*.gp4、',
-            '     orbis-pub-cmd.exe 到本目录'
-          )
-          $readme | Set-Content "$out\template\README.txt" -Encoding utf8
-          Write-Host '已剔除 Sony 专有文件，写入 template/README.txt（获取指引）'
+          # 发布包直接给完整版：模板里的 orbis-pub-cmd.exe / CONTENTS.zip 一并打包，
+          # 下载解压即可打包，不用再去上游仓库自己找文件。
+          Write-Host '发布包为完整版（含模板内的 orbis-pub-cmd.exe / CONTENTS.zip）'
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -171,7 +157,7 @@ jobs:
           Copy-Item $zip $rel -Force
           Write-Host ("发布 {0}：{1:N1} MB" -f $tag, ((Get-Item $rel).Length / 1MB))
 
-          $head = '下载 PkgStudio-' + $tag + '.zip 解压即用。公开包按合规不含 Sony 专有文件（orbis-pub-cmd.exe / CONTENTS.zip 等），首次打包前请按 template/README.txt 自行补齐。'
+          $head = '下载 PkgStudio-' + $tag + '.zip 解压即用（完整版，已内置 orbis-pub-cmd.exe 等模板文件）。'
           $notes = $head
 
           if (Test-Path 'CHANGELOG.md') {

@@ -153,8 +153,10 @@ namespace PkgStudio
 
             // 游戏图标（做解锁器图标的底图）。只在打包时下载，扫描阶段不下线图，
             // 免得几百个游戏各多一次 FTP 请求。
+            // 注意：icon0.png 不在 appmeta（那里只有 npbind/nptitle），而是在
+            // user/appmeta/<TID>/ 或外置盘的 user/appmeta/external/<TID>/ 下。
             if (it.Icon0 == null || it.Icon0.Length == 0)
-                it.Icon0 = Download(url + "icon0.png");
+                it.Icon0 = DownloadIcon(it, url);
 
             if (it.FilesLoaded)
                 return;
@@ -198,6 +200,48 @@ namespace PkgStudio
                     + "（远端 " + root + "user/trophy/conf/）");
 
             log("已补齐 " + it.TitleId + " 的奖杯文件 (" + npwr + ")");
+        }
+
+        /// <summary>
+        /// 按 PS4 的实际存放规则找游戏封面：
+        ///   内置盘：/user/appmeta/&lt;TID&gt;/icon0.png
+        ///   扩展盘：/mnt/ext0|ext1|usbN/user/appmeta/[external/]&lt;TID&gt;/icon0.png
+        /// appmeta 目录本身没有图标，所以要先试 these 几个位置；
+        /// 全都没有（光盘版、或从没启动过、已删本体）就返回 null，由模板图标兜底。
+        /// </summary>
+        private static byte[] DownloadIcon(GameItem it, string appmetaUrl)
+        {
+            string tid = it.TitleId;
+            if (string.IsNullOrEmpty(tid))
+                return null;
+
+            List<string> cand = new List<string>();
+            cand.Add(appmetaUrl + "icon0.png");
+
+            string root = it.RootUrl;
+            if (!string.IsNullOrEmpty(root))
+            {
+                string[] vols = new string[] { "", "mnt/ext0/", "mnt/ext1/", "mnt/usb0/", "mnt/usb1/" };
+                foreach (string v in vols)
+                {
+                    cand.Add(root + v + "user/appmeta/" + tid + "/icon0.png");
+                    cand.Add(root + v + "user/appmeta/external/" + tid + "/icon0.png");
+                }
+            }
+
+            foreach (string u in cand)
+            {
+                // 只试一次：这些路径大多不存在，重试纯属浪费时间
+                byte[] b = Download(u, 1);
+                if (b != null && b.Length > 512)
+                {
+                    Log.Write("图标取自 " + u + " (" + b.Length + "B)");
+                    return b;
+                }
+            }
+
+            Log.Write("没找到 " + tid + " 的 icon0.png，图标将用模板兜底");
+            return null;
         }
 
         private static string FindNpwr(byte[] data)
@@ -314,7 +358,16 @@ namespace PkgStudio
 
         private static byte[] Download(string url)
         {
-            for (int attempt = 0; attempt < 2; attempt++)
+            return Download(url, 2);
+        }
+
+        /// <summary>
+        /// attempts = 1 用于「试探一堆可能不存在的位置」（如找图标），
+        /// 避免每个 404 都要重试 + sleep，批量打包时白白多等几分钟。
+        /// </summary>
+        private static byte[] Download(string url, int attempts)
+        {
+            for (int attempt = 0; attempt < attempts; attempt++)
             {
                 try
                 {
@@ -340,7 +393,8 @@ namespace PkgStudio
                 }
                 catch
                 {
-                    System.Threading.Thread.Sleep(150);
+                    if (attempt + 1 < attempts)
+                        System.Threading.Thread.Sleep(150);
                 }
             }
             return null;
