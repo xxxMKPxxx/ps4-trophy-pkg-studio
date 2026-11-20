@@ -43,6 +43,11 @@
 `FreeType` 画中文字，链接官方 `libSceNpTrophy` stub。
 构建产物为 SCE ELF（`create-fself -out=`），塞进 pkg 当 `eboot.bin`。
 
+奖杯列表每行显示**名称 + 说明**（说明取自 `sceNpTrophyGetTrophyInfo` 的
+`OrbisNpTrophyDetails.TrophyDetails`，换行压成空格、按 UTF-8 字符边界截断）：
+已解锁的名称为白色、说明为绿色，未解锁的名称和说明都是暗灰色。
+屏幕一页 11 条，说明过长时按宽度截断。
+
 游戏内按键：
 
 | 按键 | 作用 |
