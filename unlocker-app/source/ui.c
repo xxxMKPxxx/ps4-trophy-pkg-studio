@@ -34,14 +34,15 @@
 #define PANEL2      GFX_RGB(44, 52, 68)
 #define TEXT        GFX_RGB(232, 236, 244)
 #define TEXT_DIM    GFX_RGB(140, 150, 168)
+#define TEXT_LOCKED GFX_RGB(104, 112, 128)  /* 未解锁：暗色 */
 #define ACCENT      GFX_RGB(64, 156, 255)
 #define GREEN       GFX_RGB(78, 201, 126)
 #define YELLOW      GFX_RGB(240, 196, 92)
 
 #define US_PER_SEC  1000000ULL
-#define ROW_H       56
+#define ROW_H       68      /* 名称 + 说明两行 */
 #define LIST_TOP    176
-#define LIST_ROWS   14
+#define LIST_ROWS   11      /* 11*68=748，底部仍留得下状态栏 */
 #define LIST_X      96
 #define LIST_W      (GFX_WIDTH - 96 * 2)
 
@@ -133,7 +134,8 @@ static void draw_header(int total, int unlocked)
     }
 }
 
-static void draw_row(int y, int id, const char *name, int is_unlocked, int selected)
+static void draw_row(int y, int id, const char *name, const char *desc,
+                     int is_unlocked, int selected)
 {
     char buf[32];
 
@@ -142,13 +144,18 @@ static void draw_row(int y, int id, const char *name, int is_unlocked, int selec
         gfx_fill(LIST_X, y, 6, ROW_H - 6, ACCENT);
 
     snprintf(buf, sizeof(buf), "%03d", id);
-    text(s_font_small, LIST_X + 26, y + 14, 90, buf, selected ? ACCENT : TEXT_DIM);
+    text(s_font_small, LIST_X + 26, y + 20, 90, buf, selected ? ACCENT : TEXT_DIM);
 
-    text(s_font_row, LIST_X + 116, y + 6,
-         STATUS_X - (LIST_X + 116) - 32, name, is_unlocked ? TEXT_DIM : TEXT);
+    /* 已解锁 = 亮色（白 / 绿），未解锁 = 暗色 */
+    text(s_font_row, LIST_X + 116, y + 4,
+         STATUS_X - (LIST_X + 116) - 32, name,
+         is_unlocked ? TEXT : TEXT_LOCKED);
+    text(s_font_small, LIST_X + 116, y + 36,
+         STATUS_X - (LIST_X + 116) - 32, desc,
+         is_unlocked ? GREEN : TEXT_LOCKED);
 
     if (is_unlocked)
-        text(s_font_small, STATUS_X, y + 14, 180, "已解锁", GREEN);
+        text(s_font_small, STATUS_X, y + 22, 180, "已解锁", GREEN);
 }
 
 static void draw_footer(void)
@@ -595,6 +602,7 @@ void ui_run(void)
         for (int r = 0; r < LIST_ROWS; r++) {
             int id = s_top + r;
             char nm[128];
+            char ds[512];
             int u = 0;
 
             if (id >= total)
@@ -603,7 +611,8 @@ void ui_run(void)
             if (api_get(id, nm, sizeof(nm), &u) != 0)
                 continue;
 
-            draw_row(LIST_TOP + r * ROW_H, id, nm, u, id == s_cur);
+            api_get_desc(id, ds, sizeof(ds));
+            draw_row(LIST_TOP + r * ROW_H, id, nm, ds, u, id == s_cur);
         }
 
         if (s_mode == 1)

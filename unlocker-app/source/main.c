@@ -75,6 +75,7 @@ static int g_uid;
 
 /* 奖杯缓存：GetTrophyInfo 是系统调用，绝不能每帧都调 */
 static char    g_name[MAX_TROPHIES][128];
+static char    g_desc[MAX_TROPHIES][512];   /* TrophyDetails：奖杯说明 */
 static uint8_t g_unlocked[MAX_TROPHIES];
 static int     g_count;
 static int     s_boot_font = -1;   /* 启动画面字体 slot，失败提示也用它 */
@@ -553,6 +554,7 @@ void api_refresh(void)
 
         if (get_info(id, &d, &dt) != 0) {
             g_name[id][0] = 0;
+            g_desc[id][0] = 0;
             g_unlocked[id] = 0;
             continue;
         }
@@ -560,6 +562,25 @@ void api_refresh(void)
         d.TrophyName[sizeof(d.TrophyName) - 1] = 0;
         strncpy(g_name[id], d.TrophyName, sizeof(g_name[id]) - 1);
         g_name[id][sizeof(g_name[id]) - 1] = 0;
+
+        /* 说明里常有换行，界面是一行文本，先压成空格 */
+        d.TrophyDetails[sizeof(d.TrophyDetails) - 1] = 0;
+        for (size_t j = 0; j < sizeof(g_desc[id]) - 1; j++) {
+            char c = d.TrophyDetails[j];
+            g_desc[id][j] = (c == '\r' || c == '\n' || c == '\t') ? ' ' : c;
+            if (!c)
+                break;
+        }
+        g_desc[id][sizeof(g_desc[id]) - 1] = 0;
+        /* 截断处可能正好落在多字节字符中间，回退到 UTF-8 字符边界 */
+        for (size_t j = sizeof(g_desc[id]) - 1; j > 0; j--) {
+            unsigned char c = (unsigned char)g_desc[id][j];
+            if ((c & 0xC0) != 0x80) {
+                g_desc[id][j] = 0;
+                break;
+            }
+        }
+
         g_unlocked[id] = dt.IsUnlocked ? 1 : 0;
     }
 }
@@ -576,6 +597,18 @@ int api_get(int id, char *name, int cap, int *unlocked)
     if (unlocked)
         *unlocked = g_unlocked[id];
 
+    return 0;
+}
+
+int api_get_desc(int id, char *desc, int cap)
+{
+    if (id < 0 || id >= g_count)
+        return -1;
+
+    if (desc && cap > 0) {
+        strncpy(desc, g_desc[id], (size_t)cap - 1);
+        desc[cap - 1] = 0;
+    }
     return 0;
 }
 

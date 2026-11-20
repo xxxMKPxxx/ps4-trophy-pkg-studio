@@ -6,6 +6,7 @@
 /* 由 main.c 提供 */
 int api_count(void);
 int api_get(int id, char *name, int cap, int *unlocked);
+int api_get_desc(int id, char *desc, int cap);   /* 奖杯说明（TrophyDetails） */
 int api_unlock(int id);
 void api_refresh(void);
 int api_order_len(void);
