@@ -44,9 +44,17 @@
 构建产物为 SCE ELF（`create-fself -out=`），塞进 pkg 当 `eboot.bin`。
 
 奖杯列表每行显示**名称 + 说明**（说明取自 `sceNpTrophyGetTrophyInfo` 的
-`OrbisNpTrophyDetails.TrophyDetails`，换行压成空格、按 UTF-8 字符边界截断）：
+`OrbisNpTrophyDetails.TrophyDetails`，换行压成空格、按 UTF-8 字符边界截断），
+右侧另有一列**奖杯种类**（白金 / 金 / 银 / 铜，颜色按等级区分）。
 已解锁的名称为白色、说明为绿色，未解锁的名称和说明都是暗灰色。
 屏幕一页 11 条，说明过长时按宽度截断。
+
+等级取自 `OrbisNpTrophyDetails.Unk00`（OpenOrbis 头文件没有命名字段；
+数值与奖杯库 `tbl_trophy_flag.grade` 一致：1 白金 / 2 金 / 3 银 / 4 铜），
+启动时会把头 8 个奖杯的原始 `Unk00 / Unk01` 写进运行日志便于核对。
+
+**0 号奖杯**：只有确认（或保守认为）它是白金时才禁止单独解锁并在一键解锁里排到最后；
+没有白金的游戏里 0 号是普通奖杯，可以直接按 X 解锁，一键解锁也会把它排进正常顺序。
 
 游戏内按键：
 
