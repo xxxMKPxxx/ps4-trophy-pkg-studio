@@ -77,6 +77,7 @@ static int g_uid;
 static char    g_name[MAX_TROPHIES][128];
 static char    g_desc[MAX_TROPHIES][512];   /* TrophyDetails：奖杯说明 */
 static uint8_t g_unlocked[MAX_TROPHIES];
+static uint8_t g_grade[MAX_TROPHIES];       /* 1=白金 2=金 3=银 4=铜，0=未知 */
 static int     g_count;
 static int     s_boot_font = -1;   /* 启动画面字体 slot，失败提示也用它 */
 
@@ -556,8 +557,17 @@ void api_refresh(void)
             g_name[id][0] = 0;
             g_desc[id][0] = 0;
             g_unlocked[id] = 0;
+            g_grade[id] = 0;
             continue;
         }
+
+        /* OpenOrbis 的 OrbisNpTrophyDetails 里没有 grade 字段名，
+           实测候选在 Unk00（1白金/2金/3银/4铜，与奖杯库 tbl_trophy_flag.grade 一致）。
+           头几个奖杯的原始值写进日志，方便核对字段位置。 */
+        g_grade[id] = (uint8_t)(d.Unk00 > 0 && d.Unk00 < 256 ? d.Unk00 : 0);
+        if (id < 8)
+            log_line("grade probe id=%d unk00=%d unk01=%d hidden=%d name=%s",
+                     id, (int)d.Unk00, (int)d.Unk01, (int)d.HiddenFromView, d.TrophyName);
 
         d.TrophyName[sizeof(d.TrophyName) - 1] = 0;
         strncpy(g_name[id], d.TrophyName, sizeof(g_name[id]) - 1);
@@ -610,6 +620,13 @@ int api_get_desc(int id, char *desc, int cap)
         desc[cap - 1] = 0;
     }
     return 0;
+}
+
+int api_get_grade(int id)
+{
+    if (id < 0 || id >= g_count)
+        return -1;
+    return g_grade[id];
 }
 
 int api_unlock(int id)

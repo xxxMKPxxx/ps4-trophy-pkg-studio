@@ -134,8 +134,30 @@ static void draw_header(int total, int unlocked)
     }
 }
 
+static const char *grade_text(int g)
+{
+    switch (g) {
+        case 1: return "白金";
+        case 2: return "金";
+        case 3: return "银";
+        case 4: return "铜";
+        default: return "";
+    }
+}
+
+static uint32_t grade_color(int g)
+{
+    switch (g) {
+        case 1: return GFX_RGB(255, 240, 160);   /* 白金：最亮 */
+        case 2: return GFX_RGB(255, 205, 90);    /* 金 */
+        case 3: return GFX_RGB(205, 218, 235);   /* 银 */
+        case 4: return GFX_RGB(205, 145, 105);   /* 铜 */
+        default: return TEXT_DIM;
+    }
+}
+
 static void draw_row(int y, int id, const char *name, const char *desc,
-                     int is_unlocked, int selected)
+                     int is_unlocked, int grade, int selected)
 {
     char buf[32];
 
@@ -151,8 +173,13 @@ static void draw_row(int y, int id, const char *name, const char *desc,
          STATUS_X - (LIST_X + 116) - 32, name,
          is_unlocked ? TEXT : TEXT_LOCKED);
     text(s_font_small, LIST_X + 116, y + 36,
-         STATUS_X - (LIST_X + 116) - 32, desc,
+         STATUS_X - (LIST_X + 116) - 140, desc,
          is_unlocked ? GREEN : TEXT_LOCKED);
+
+    /* 奖杯种类：白金 / 金 / 银 / 铜，放在状态列左边 */
+    if (grade > 0 && grade < 5)
+        text(s_font_small, STATUS_X - 120, y + 20, 110,
+             grade_text(grade), grade_color(grade));
 
     if (is_unlocked)
         text(s_font_small, STATUS_X, y + 22, 180, "已解锁", GREEN);
@@ -329,28 +356,35 @@ static void build_plan(void)
             s_plan_len++;
         }
 
-        /* 0 号是白金：不管表里怎么写，挪到最后 */
-        for (int i = 0; i < s_plan_len; i++) {
-            if (s_plan_id[i] == 0) {
-                int d = s_plan_delay[i];
-                for (int k = i; k < s_plan_len - 1; k++) {
-                    s_plan_id[k] = s_plan_id[k + 1];
-                    s_plan_delay[k] = s_plan_delay[k + 1];
+        /* 0 号只有在确认是白金（或读不到等级、按老习惯保守处理）时才挪到最后；
+           合集或没有白金的游戏里 0 号是普通奖杯，按用户写的顺序解锁 */
+        int plat0 = (api_get_grade(0) == 1 || api_get_grade(0) == 0);
+        if (plat0) {
+            for (int i = 0; i < s_plan_len; i++) {
+                if (s_plan_id[i] == 0) {
+                    int d = s_plan_delay[i];
+                    for (int k = i; k < s_plan_len - 1; k++) {
+                        s_plan_id[k] = s_plan_id[k + 1];
+                        s_plan_delay[k] = s_plan_delay[k + 1];
+                    }
+                    s_plan_id[s_plan_len - 1] = 0;
+                    s_plan_delay[s_plan_len - 1] = d;
+                    break;
                 }
-                s_plan_id[s_plan_len - 1] = 0;
-                s_plan_delay[s_plan_len - 1] = d;
-                break;
             }
         }
     } else {
-        for (int id = 1; id < total && j < 500; id++) {
+        int plat0 = (api_get_grade(0) == 1 || api_get_grade(0) == 0);
+        for (int id = plat0 ? 1 : 0; id < total && j < 500; id++) {
             s_plan_id[j] = id;
             s_plan_delay[j] = 1;
             j++;
         }
-        s_plan_id[j] = 0;              /* 白金最后 */
-        s_plan_delay[j] = 1;
-        j++;
+        if (plat0) {
+            s_plan_id[j] = 0;              /* 白金最后 */
+            s_plan_delay[j] = 1;
+            j++;
+        }
         s_plan_len = j;
     }
 }
@@ -504,8 +538,10 @@ void ui_run(void)
                 int unlocked = 0;
 
                 if (api_get(s_cur, name, sizeof(name), &unlocked) == 0) {
-                    if (s_cur == 0 && !unlocked) {
-                        /* 0 号是白金，系统不允许单独解（0x8055160d） */
+                    /* 只有确认 0 号是白金（或等级未知、保守处理）才拦；
+                       没有白金的游戏 0 号是普通奖杯，可以直接按 X 解 */
+                    if (s_cur == 0 && !unlocked &&
+                        (api_get_grade(0) == 1 || api_get_grade(0) == 0)) {
                         toast("0 号是白金，请用 L1+○ 一键解锁（自动放最后）");
                     } else if (unlocked) {
                         toast("这个已经解锁了：%s", name);
@@ -514,6 +550,9 @@ void ui_run(void)
                         if (rc == 0) {
                             toast("已解锁 ID %03d：%s", s_cur, name);
                             log_line("manual unlock ok id=%d", s_cur);
+                        } else if ((uint32_t)rc == 0x8055160d) {
+                            toast("这是白金奖杯，必须先解锁其它奖杯（0x8055160d）");
+                            log_line("manual unlock platinum rejected id=%d", s_cur);
                         } else {
                             toast("解锁失败 ID %03d：%s（0x%08x）", s_cur, name, (uint32_t)rc);
                             log_line("manual unlock fail id=%d rc=0x%08x", s_cur, (uint32_t)rc);
@@ -612,7 +651,8 @@ void ui_run(void)
                 continue;
 
             api_get_desc(id, ds, sizeof(ds));
-            draw_row(LIST_TOP + r * ROW_H, id, nm, ds, u, id == s_cur);
+            draw_row(LIST_TOP + r * ROW_H, id, nm, ds, u,
+                     api_get_grade(id), id == s_cur);
         }
 
         if (s_mode == 1)
