@@ -356,9 +356,9 @@ static void build_plan(void)
             s_plan_len++;
         }
 
-        /* 0 号只有在确认是白金（或读不到等级、按老习惯保守处理）时才挪到最后；
-           合集或没有白金的游戏里 0 号是普通奖杯，按用户写的顺序解锁 */
-        int plat0 = (api_get_grade(0) == 1 || api_get_grade(0) == 0);
+        /* 只有确认 0 号是白金（等级=1）才挪到最后。等级读不到（0）按普通奖杯处理：
+           隐藏奖杯解锁前通常读不到等级，而隐藏奖杯不可能是白金 */
+        int plat0 = (api_get_grade(0) == 1);
         if (plat0) {
             for (int i = 0; i < s_plan_len; i++) {
                 if (s_plan_id[i] == 0) {
@@ -374,7 +374,7 @@ static void build_plan(void)
             }
         }
     } else {
-        int plat0 = (api_get_grade(0) == 1 || api_get_grade(0) == 0);
+        int plat0 = (api_get_grade(0) == 1);   /* 未知等级不按白金处理 */
         for (int id = plat0 ? 1 : 0; id < total && j < 500; id++) {
             s_plan_id[j] = id;
             s_plan_delay[j] = 1;
@@ -538,10 +538,9 @@ void ui_run(void)
                 int unlocked = 0;
 
                 if (api_get(s_cur, name, sizeof(name), &unlocked) == 0) {
-                    /* 只有确认 0 号是白金（或等级未知、保守处理）才拦；
-                       没有白金的游戏 0 号是普通奖杯，可以直接按 X 解 */
-                    if (s_cur == 0 && !unlocked &&
-                        (api_get_grade(0) == 1 || api_get_grade(0) == 0)) {
+                    /* 只有确认 0 号是白金（等级=1）才拦；等级未知（多为隐藏奖杯，
+                       隐藏奖杯不可能是白金）按普通奖杯处理，可以直接按 X 解 */
+                    if (s_cur == 0 && !unlocked && api_get_grade(0) == 1) {
                         toast("0 号是白金，请用 L1+○ 一键解锁（自动放最后）");
                     } else if (unlocked) {
                         toast("这个已经解锁了：%s", name);
