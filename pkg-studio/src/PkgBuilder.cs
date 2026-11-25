@@ -22,7 +22,7 @@ namespace PkgStudio
             if (!it.Usable)
                 throw new Exception("类型为「" + it.KindText + "」，不能做奖杯包");
             if (!it.FilesLoaded)
-                throw new Exception("缺少 nptitle.dat / npbind.dat / trophy00.trp");
+                throw new Exception("缺少 nptitle.dat 或 npbind.dat");
 
             string zip = Path.Combine(templateDir, "CONTENTS.zip");
             if (!File.Exists(zip))
@@ -134,7 +134,16 @@ namespace PkgStudio
                 bool markerNoTrp = File.Exists(Path.Combine(templateDir, "no-trophy-trp"));
                 bool markerForceTrp = File.Exists(Path.Combine(templateDir, "force-trophy-trp"));
                 bool skipTrp;
-                if (markerNoTrp)
+                if (it.Trophy == null)
+                {
+                    // 包里根本没有 trophyNN.trp（如 PROTOTYPE BIOHAZARD 只有 01/02、
+                    // 或整包没带 TRP）。没有 TRP 可写时只能走 no-trophy-trp，
+                    // 靠主机 /user/trophy/conf/ 里已有的定义注册奖杯集。
+                    skipTrp = true;
+                    log("包内没有 trophyNN.trp → 不打包 trophy00.trp，靠主机已有奖杯定义");
+                    Log.Write("包内没有 trophyNN.trp，自动 no-trophy-trp（需该游戏在本机启动过一次）");
+                }
+                else if (markerNoTrp)
                 {
                     skipTrp = true;
                     log("no-trophy-trp 标记：不打包 trophy00.trp");

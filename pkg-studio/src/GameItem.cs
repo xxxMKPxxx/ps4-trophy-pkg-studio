@@ -27,7 +27,8 @@ namespace PkgStudio
         public byte[] Param;
         public byte[] Nptitle;
         public byte[] Npbind;
-        public byte[] Trophy;
+        public byte[] Trophy;        // 主 TRP（取 trophy00，没有则取编号最小的）
+        public System.Collections.Generic.List<byte[]> Trophies;  // 包里全部 trophyNN.trp（合集可能多个）
         public byte[] Icon0;         // 游戏自己的 icon0.png，用作解锁器图标的底图
 
         public bool Usable
@@ -35,9 +36,15 @@ namespace PkgStudio
             get { return Kind == GameKind.Game; }
         }
 
+        /// <summary>
+        /// 打包必需的两个文件。TRP 是可选的：多 commid / 多奖杯组的游戏本来就走
+        /// no-trophy-trp（靠主机 /user/trophy/conf/ 里已有的定义），没有 TRP 也能出包。
+        /// 以前把 Trophy 也算进来，导致 trophy 不从 00 开始（只有 trophy01/02）的包
+        /// 被判成缺件、已读到的 param/nptitle/npbind 被整个丢掉，再转去走打不开的 orbis。
+        /// </summary>
         public bool FilesLoaded
         {
-            get { return Nptitle != null && Npbind != null && Trophy != null; }
+            get { return Nptitle != null && Npbind != null; }
         }
 
         public string KindText

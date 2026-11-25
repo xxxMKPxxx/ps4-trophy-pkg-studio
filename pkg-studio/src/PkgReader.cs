@@ -102,7 +102,7 @@ namespace PkgStudio
             // 按文件名在全缓存里找，不假定几个文件都在同一目录（Sc0 / Image0 会分开）
             it.Nptitle = ReadFirst(work, "nptitle.dat");
             it.Npbind = ReadFirst(work, "npbind.dat");
-            it.Trophy = ReadFirst(work, "trophy00.trp");
+            it.Trophy = ReadFirst(work, "trophy*.trp");   // 不只认 trophy00（有的包是 01/02 起）
 
             Log.Write("导入结果(" + watch.ElapsedMilliseconds + " ms): " + it.Title + " / " + it.TitleId
                 + " / " + it.Category
@@ -168,18 +168,21 @@ namespace PkgStudio
                 }
 
                 // 还缺 trophy 的话，单独按文件再试一次（有的包里只有它单独一个条目）
-                if (ReadFirst(work, "trophy00.trp") == null)
+                if (ReadFirst(work, "trophy*.trp") == null)
                 {
                     string[] trophySels = new string[]
                     {
                         ":Sc0/sce_sys/trophy/trophy00.trp",
                         ":Image0/sce_sys/trophy/trophy00.trp",
-                        ":sce_sys/trophy/trophy00.trp"
+                        ":sce_sys/trophy/trophy00.trp",
+                        ":Sc0/sce_sys/trophy/trophy01.trp",
+                        ":Image0/sce_sys/trophy/trophy01.trp",
+                        ":sce_sys/trophy/trophy01.trp"
                     };
                     Stopwatch w = Stopwatch.StartNew();
                     foreach (string sel in trophySels)
                     {
-                        if (ReadFirst(work, "trophy00.trp") != null)
+                        if (ReadFirst(work, "trophy*.trp") != null)
                             break;
                         RunExtract(exe, tools, srcPkg, work, sel, "trp", w);
                     }
@@ -217,11 +220,11 @@ namespace PkgStudio
 
             it.Nptitle = ReadFirst(work, "nptitle.dat");
             it.Npbind = ReadFirst(work, "npbind.dat");
-            it.Trophy = ReadFirst(work, "trophy00.trp");
+            it.Trophy = ReadFirst(work, "trophy*.trp");   // 不只认 trophy00（有的包是 01/02 起）
 
             if (it.Npbind == null) throw new Exception("包里没有 npbind.dat");
             if (it.Nptitle == null) throw new Exception("包里没有 nptitle.dat");
-            if (it.Trophy == null) throw new Exception("包里没有 trophy00.trp（sce_sys/trophy/ 下）");
+            // trophy 是可选的：没有 trophyNN.trp 的包走 no-trophy-trp（靠主机已有定义）
 
             log("已补齐 " + it.TitleId);
         }
@@ -232,7 +235,7 @@ namespace PkgStudio
             return FindFile(work, "param.sfo") != null
                 && FindFile(work, "nptitle.dat") != null
                 && FindFile(work, "npbind.dat") != null
-                && FindFile(work, "trophy00.trp") != null;
+                && FindFile(work, "trophy*.trp") != null;
         }
 
         private static byte[] ReadFirst(string root, string name)
