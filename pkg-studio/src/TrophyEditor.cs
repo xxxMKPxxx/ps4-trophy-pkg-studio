@@ -75,7 +75,7 @@ namespace PkgStudio
         {
             Text = "连接解锁 · PS4 奖杯时间戳编辑";
             ClientSize = new Size(1060, 720);
-            MinimumSize = new Size(1040, 640);
+            MinimumSize = new Size(1076, 760);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Microsoft YaHei UI", 9f);
 
