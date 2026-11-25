@@ -312,10 +312,20 @@ namespace PkgStudio
 
                     BeginInvoke(new Action(() =>
                     {
-                        localDb = local;
-                        dirty = false;
-                        LoadGames();
-                        Status("已连接 " + host + " · " + uid);
+                        // ★ UI 线程的回调异常必须自己吞掉，否则 WinForms 直接崩进程（闪退）
+                        try
+                        {
+                            localDb = local;
+                            dirty = false;
+                            LoadGames();
+                            Status("已连接 " + host + " · " + uid);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log("读取奖杯库失败: " + ex.Message);
+                            Status("读取失败");
+                            ShowError("读取奖杯库失败：\n" + ex.Message + "\n\n详细见窗口右下日志。", "读取失败");
+                        }
                     }));
                 }
                 catch (Exception ex)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -41,16 +42,18 @@ namespace PkgStudio
         private static extern IntPtr sqlite3_errmsg(IntPtr pDb);
 
         private const int SQLITE_OK = 0;
+        private const int SQLITE_OPEN_READONLY = 0x00000001;
         private const int SQLITE_OPEN_READWRITE = 0x00000002;
         private const int SQLITE_OPEN_CREATE = 0x00000004;
-        private const int SQLITE_OPEN_URI = 0x00000040;
 
         public Sqlite3(string path, bool readOnly = false)
         {
-            int flags = readOnly ? SQLITE_OPEN_READWRITE : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
-            // 用 URI 打开的好处：路径含空格/中文也不会被当参数分隔符
-            string uri = "file:" + Uri.EscapeUriString(path.Replace('\\', '/'));
-            int rc = sqlite3_open_v2(Utf8(uri), out db, flags | SQLITE_OPEN_URI, null);
+            // 直接传 Windows 路径（UTF-8）。不要用 URI 模式：
+            // "file:C:/..." 缺少 "///" 会被 sqlite 当相对路径，打开失败。
+            if (!File.Exists(path) && readOnly)
+                throw new Exception("数据库文件不存在: " + path);
+            int flags = readOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+            int rc = sqlite3_open_v2(Utf8(path), out db, flags, null);
             if (rc != SQLITE_OK || db == IntPtr.Zero)
                 throw new Exception("打开数据库失败: " + LastError());
         }
