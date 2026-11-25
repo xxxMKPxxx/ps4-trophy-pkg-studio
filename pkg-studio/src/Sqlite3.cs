@@ -35,7 +35,7 @@ namespace PkgStudio
         /// <summary>执行 INSERT/UPDATE/DELETE。</summary>
         public void Exec(string sql)
         {
-            using (SQLiteCommand cmd = conn.CreateCommand())
+            using (SQLiteCommand cmd = (SQLiteCommand)conn.CreateCommand())
             {
                 cmd.CommandText = sql;
                 cmd.ExecuteNonQuery();
@@ -48,7 +48,7 @@ namespace PkgStudio
         public List<string[]> Query(string sql)
         {
             var rows = new List<string[]>();
-            using (SQLiteCommand cmd = conn.CreateCommand())
+            using (SQLiteCommand cmd = (SQLiteCommand)conn.CreateCommand())
             {
                 cmd.CommandText = sql;
                 using (SQLiteDataReader rd = cmd.ExecuteReader())
@@ -73,7 +73,7 @@ namespace PkgStudio
         /// <summary>取单值（第一行第一列），没有结果返回 null。</summary>
         public string Scalar(string sql)
         {
-            using (SQLiteCommand cmd = conn.CreateCommand())
+            using (SQLiteCommand cmd = (SQLiteCommand)conn.CreateCommand())
             {
                 cmd.CommandText = sql;
                 object v = cmd.ExecuteScalar();
