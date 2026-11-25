@@ -209,8 +209,10 @@ namespace PkgStudio
         private static byte[] RsaDecryptKey3(byte[] encrypted)
         {
             Assembly asm = typeof(PS4_Tools.PKG.SceneRelated.Unprotected_PKG).Assembly;
-            Type t = asm.GetType("PS4_Tools.Util.PS4Keys+ShellCore_Keys+Retail+RSA_PKG_Meta", false);
-            if (t == null) throw new Exception("找不到 RSA_PKG_Meta");
+            // 密钥字节在编译生成的 <PrivateImplementationDetails> 类型里（字段名就是十六进制值），
+            // RSA_PKG_Meta 只是把它们组装成 RSAParameters 的壳。
+            Type t = asm.GetType("<PrivateImplementationDetails>", false);
+            if (t == null) throw new Exception("找不到 <PrivateImplementationDetails>");
 
             RSAParameters p = new RSAParameters();
             p.P = KeyBytes(t, "C1D52ECFD111255EE610C500024CFEA769DDD62E");
