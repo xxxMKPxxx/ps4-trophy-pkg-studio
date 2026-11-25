@@ -39,6 +39,11 @@
       <HintPath>..\PS4_Tools\TrophyUnlocker\bin\Release\PARAM.SFO.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <!-- 「连接解锁」读写 trophy_local.db 用的 SQLite 库（x86 mixed-mode，随产物分发，无需 NuGet） -->
+    <Reference Include="System.Data.SQLite">
+      <HintPath>native\System.Data.SQLite.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="src\Program.cs" />

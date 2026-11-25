@@ -1,143 +1,71 @@
 using System;
 using System.Collections.Generic;
+using System.Data.SQLite;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
 
 namespace PkgStudio
 {
     /// <summary>
-    /// 极简 SQLite 读写封装：直接 P/Invoke 同目录的 sqlite3.dll，
-    /// 不引入 NuGet 依赖（CI 只装 MSBuild，PackageReference 还要额外 restore）。
-    /// 只需要 5 个 API：open / get_table（读 SELECT）/ exec（写 UPDATE/DDL）/ free_table / close。
+    /// SQLite 读写封装——基于 System.Data.SQLite（x86 mixed-mode，随 PS4_Tools 产物一起分发）。
     ///
-    /// PS4 的 trophy_local.db 是标准 SQLite 3，里面全是 UTF-8 文本（繁体奖杯名），
-    /// 所以所有字符串都按 UTF-8 编解码，不能用默认的 ANSI marshaling。
+    /// 为什么不再用 P/Invoke 直接调 sqlite3.dll：
+    ///   PkgStudio 依赖 PS4_Tools.dll 等 x86 程序集，进程固定 32 位；
+    ///   原生 sqlite3.dll 的位数/运行库依赖极易踩坑（0x8007000B 格式错误闪退），
+    ///   而这份 System.Data.SQLite.dll 是上游已在用的成熟库，位数匹配、无需 NuGet。
+    ///
+    /// PS4 的 trophy_local.db 是标准 SQLite 3，里面是 UTF-8 繁体奖杯名，
+    /// System.Data.SQLite 默认按 UTF-8 处理，无需额外 marshaling。
     /// </summary>
     internal sealed class Sqlite3 : IDisposable
     {
-        private const string Dll = "sqlite3.dll";
-        private IntPtr db = IntPtr.Zero;
-
-        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int sqlite3_open_v2(byte[] filename, out IntPtr ppDb, int flags, byte[] zvfs);
-
-        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int sqlite3_close(IntPtr pDb);
-
-        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int sqlite3_exec(IntPtr pDb, byte[] sql, IntPtr callback, IntPtr arg, out IntPtr errmsg);
-
-        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void sqlite3_free(IntPtr p);
-
-        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int sqlite3_get_table(IntPtr pDb, byte[] sql, out IntPtr result,
-            out int nrow, out int ncol, out IntPtr errmsg);
-
-        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void sqlite3_free_table(IntPtr result);
-
-        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr sqlite3_errmsg(IntPtr pDb);
-
-        private const int SQLITE_OK = 0;
-        private const int SQLITE_OPEN_READONLY = 0x00000001;
-        private const int SQLITE_OPEN_READWRITE = 0x00000002;
-        private const int SQLITE_OPEN_CREATE = 0x00000004;
+        private readonly SQLiteConnection conn;
 
         public Sqlite3(string path, bool readOnly = false)
         {
-            // 直接传 Windows 路径（UTF-8）。不要用 URI 模式：
-            // "file:C:/..." 缺少 "///" 会被 sqlite 当相对路径，打开失败。
             if (!File.Exists(path) && readOnly)
                 throw new Exception("数据库文件不存在: " + path);
-            int flags = readOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
-            int rc = sqlite3_open_v2(Utf8(path), out db, flags, null);
-            if (rc != SQLITE_OK || db == IntPtr.Zero)
-                throw new Exception("打开数据库失败: " + LastError());
+
+            // 只读场景用 Read Only 模式，避免误写；不指定 Pooling 防止文件被独占
+            string cs = "Data Source=" + path + ";Version=3;";
+            if (readOnly) cs += "Read Only=True;";
+            conn = new SQLiteConnection(cs);
+            conn.Open();
         }
 
-        private static byte[] Utf8(string s)
-        {
-            // sqlite3_* 要的是 NUL 结尾的 UTF-8
-            byte[] raw = Encoding.UTF8.GetBytes(s ?? "");
-            byte[] buf = new byte[raw.Length + 1];
-            Array.Copy(raw, buf, raw.Length);
-            return buf;
-        }
-
-        private static string PtrToUtf8(IntPtr p)
-        {
-            if (p == IntPtr.Zero) return "";
-            int len = 0;
-            while (Marshal.ReadByte(p, len) != 0) len++;
-            if (len == 0) return "";
-            byte[] buf = new byte[len];
-            Marshal.Copy(p, buf, 0, len);
-            return Encoding.UTF8.GetString(buf);
-        }
-
-        private string LastError()
-        {
-            if (db == IntPtr.Zero) return "数据库未打开";
-            return PtrToUtf8(sqlite3_errmsg(db));
-        }
-
-        /// <summary>执行 INSERT/UPDATE/DELETE，返回受影响行数无法直接拿到，用 changes() 查。</summary>
+        /// <summary>执行 INSERT/UPDATE/DELETE。</summary>
         public void Exec(string sql)
         {
-            IntPtr err = IntPtr.Zero;
-            int rc = sqlite3_exec(db, Utf8(sql), IntPtr.Zero, IntPtr.Zero, out err);
-            if (rc != SQLITE_OK)
+            using (SQLiteCommand cmd = conn.CreateCommand())
             {
-                string msg = err != IntPtr.Zero ? PtrToUtf8(err) : LastError();
-                if (err != IntPtr.Zero) sqlite3_free(err);
-                throw new Exception("SQL 执行失败: " + msg + "\n" + Trim(sql));
+                cmd.CommandText = sql;
+                cmd.ExecuteNonQuery();
             }
-        }
-
-        private static string Trim(string s)
-        {
-            return s.Length > 300 ? s.Substring(0, 300) + "…" : s;
         }
 
         /// <summary>
-        /// 读 SELECT，返回行列表；第一行是列名。
-        /// 调用方按列名索引取单元格，避免依赖列顺序。
+        /// 读 SELECT，返回行列表；第一行是列名（调用方按 i=1 开始遍历数据行）。
         /// </summary>
         public List<string[]> Query(string sql)
         {
-            IntPtr table = IntPtr.Zero;
-            int nrow = 0, ncol = 0;
-            IntPtr err = IntPtr.Zero;
-            int rc = sqlite3_get_table(db, Utf8(sql), out table, out nrow, out ncol, out err);
-            if (rc != SQLITE_OK)
-            {
-                string msg = err != IntPtr.Zero ? PtrToUtf8(err) : LastError();
-                if (err != IntPtr.Zero) sqlite3_free(err);
-                if (table != IntPtr.Zero) sqlite3_free_table(table);
-                throw new Exception("SQL 查询失败: " + msg + "\n" + Trim(sql));
-            }
-
             var rows = new List<string[]>();
-            try
+            using (SQLiteCommand cmd = conn.CreateCommand())
             {
-                // 表内存布局：string*[0..ncol-1] 是列名，之后是 nrow*ncol 个数据单元格
-                for (int r = -1; r < nrow; r++)
+                cmd.CommandText = sql;
+                using (SQLiteDataReader rd = cmd.ExecuteReader())
                 {
-                    var row = new string[ncol];
-                    for (int c = 0; c < ncol; c++)
+                    // 第一行：列名
+                    var header = new string[rd.FieldCount];
+                    for (int c = 0; c < rd.FieldCount; c++) header[c] = rd.GetName(c);
+                    rows.Add(header);
+
+                    while (rd.Read())
                     {
-                        int idx = (r + 1) * ncol + c;
-                        row[c] = PtrToUtf8(Marshal.ReadIntPtr(table, idx * IntPtr.Size));
+                        var row = new string[rd.FieldCount];
+                        for (int c = 0; c < rd.FieldCount; c++)
+                            row[c] = rd.IsDBNull(c) ? "" : rd.GetValue(c).ToString();
+                        rows.Add(row);
                     }
-                    rows.Add(row);
                 }
-            }
-            finally
-            {
-                sqlite3_free_table(table);
             }
             return rows;
         }
@@ -145,17 +73,20 @@ namespace PkgStudio
         /// <summary>取单值（第一行第一列），没有结果返回 null。</summary>
         public string Scalar(string sql)
         {
-            var rows = Query(sql);
-            if (rows.Count < 2 || rows[1].Length == 0) return null;
-            return rows[1][0];
+            using (SQLiteCommand cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = sql;
+                object v = cmd.ExecuteScalar();
+                return v == null || v == DBNull.Value ? null : v.ToString();
+            }
         }
 
         public void Dispose()
         {
-            if (db != IntPtr.Zero)
+            if (conn != null)
             {
-                sqlite3_close(db);
-                db = IntPtr.Zero;
+                conn.Close();
+                conn.Dispose();
             }
         }
     }
