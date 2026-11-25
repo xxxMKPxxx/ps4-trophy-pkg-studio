@@ -11,6 +11,8 @@
 - 加密条目沿用原版 key3 解密（RSA key seed + AES-CBC），只对目标条目做；
   不支持的加密类型/异常包才退回原版全量读取。
 - 新增诊断入口：`PkgStudio.exe --probe <pkg路径> <结果文件>`，不启动界面，跑一遍读取并把结果写出，便于验证大包。
+- 实测 CUSA34390（GoW Ragnarök，96,191,381,504 字节 / 约 89.6 GiB）：按需读取 81 ms，
+  完整拿到 param 6336B、nptitle 160B、npbind 532B、trophy 3.7MB，无回退、无整包解压。
 
 ### v1.0.8 修复：连接解锁点击后闪退
 - SQLite 打开改用直接 Windows 路径（原先的 `file:C:/...` 缺 `///`，被当成相对路径打不开，
