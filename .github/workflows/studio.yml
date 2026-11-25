@@ -89,6 +89,13 @@ jobs:
           Copy-Item $font "$out\template\font.ttf" -Force
           Write-Host ("已放入界面字体：{0:N1} MB" -f ((Get-Item $font).Length / 1MB))
 
+          # SQLite 原生库：「连接解锁」功能用它读写 PS4 的 trophy_local.db。
+          # 仓库自带 x64 dll，避免 NuGet restore 依赖；AnyCPU+Prefer32Bit=false 在 64 位系统上匹配。
+          $sqlite = '.\pkg-studio\native\sqlite3.dll'
+          if (-not (Test-Path $sqlite)) { throw '缺 pkg-studio\native\sqlite3.dll（连接解锁功能）' }
+          Copy-Item $sqlite "$out\" -Force
+          Write-Host ("已放入 sqlite3.dll：{0:N0} 字节" -f ((Get-Item $sqlite).Length))
+
           # 奖杯图标：打 pkg 时叠到游戏封面上，生成解锁器的 icon0.png
           $cup = '.\pkg-studio\assets\icon1.png'
           if (-not (Test-Path $cup)) { throw '缺 pkg-studio\assets\icon1.png（奖杯图标）' }

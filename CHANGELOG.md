@@ -2,6 +2,26 @@
 
 本文件同时是 GitHub Release 的更新说明来源：发布 `v*` 标签时，工作流会取对应章节作为 Release 正文。
 
+## [未发布]
+
+新增**连接解锁**功能（主界面蓝色按钮）：直连 PS4 的 GoldHEN FTP（端口 2121），
+读取 `/user/home/<uid>/trophy/db/trophy_local.db`，给奖杯写入**自定义解锁时间戳**——
+不需要打包 PKG、不需要调主机时钟、不需要碰加密的 `trophy.img`。
+- 选游戏 → 选奖杯 → 手动填本机日期时间（自动转 UTC）→ 写入，或导入 CSV
+  （格式 `ID,YYYY-MM-DD HH:mm:ss`，表头自动跳过）
+- 只改 `tbl_trophy_flag` 的 `unlocked`/两个时间字段 + `tbl_trophy_title` 的进度统计；
+  **绝不动 revision / 游戏名 / 身份摘要**（实测改了会被服务判定不符、整体重建为 0）
+- 写入前自动在主机留 `.bak-trophyedit-<时间戳>` 备份，只处理选中的游戏
+- 白金杯默认跳过（全收集后系统自动授予），勾选后可强制写入
+- 实测：情热传说后另一游戏 35 杯单组，写入 2024-03-15 时间戳，重启 + 打开奖杯页后保持，UI 正确显示
+
+导入 PKG 时不再要求奖杯文件必须叫 `trophy00.trp`：实测《PROTOTYPE BIOHAZARD》(CUSA06545)
+只有 `trophy01.trp` / `trophy02.trp`，鬼泣合集、Uncharted Legacy 等也带多个 TRP，旧版只认
+`trophy00` 会把这类包判成缺件、丢掉已读到的 param/nptitle/npbind 转去走 orbis 解包而失败。
+现在按 `TROPHY__TROPHY<编号>_TRP` 前缀匹配任意编号、收集全部 TRP，主 TRP 取编号最小的；
+`trophy*.trp` 在解包路径里也改成通配。TRP 变为可选：包里没有 TRP 时自动走 no-trophy-trp
+（靠主机 `/user/trophy/conf/` 已有定义注册），和合集包的处理一致。
+
 ## [v1.0.6] - 2026-11-21
 
 奖杯列表右侧新增**奖杯种类**显示：白金 / 金 / 银 / 铜，按等级用不同颜色。

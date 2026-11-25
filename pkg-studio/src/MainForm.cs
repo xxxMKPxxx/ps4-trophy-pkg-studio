@@ -232,6 +232,16 @@ namespace PkgStudio
             Button btnFtp = MakeButton("扫描 FTP");
             btnFtp.Click += OnScanFtpClick;
 
+            // 「连接解锁」：跳到奖杯时间戳编辑器（直连 PS4 改 trophy_local.db，
+            // 不打包 PKG；实测安全规则见 TrophyEditor 注释）
+            Button btnTrophyEditor = MakeButton("连接解锁", true);
+            btnTrophyEditor.Click += delegate
+            {
+                var editor = new TrophyEditor(txtHost.Text);
+                editor.Show(this);
+            };
+            tips.SetToolTip(btnTrophyEditor, "直连 PS4 编辑奖杯解锁状态与时间戳（无需打包 PKG）");
+
             Label lblHost = MakeLabel("PS4 IP");
             txtHost = MakeText("192.168.1.10", 130);
             tips.SetToolTip(txtHost, "PS4 的 IP（GoldHEN FTP 端口 2121）");
@@ -242,6 +252,8 @@ namespace PkgStudio
             row1.Controls.Add(lblHost);
             row1.Controls.Add(txtHost);
             row1.Controls.Add(btnFtp);
+            row1.Controls.Add(MakeSep());
+            row1.Controls.Add(btnTrophyEditor);
 
             // ---- 第二行 ----
             TableLayoutPanel row2 = new TableLayoutPanel();
