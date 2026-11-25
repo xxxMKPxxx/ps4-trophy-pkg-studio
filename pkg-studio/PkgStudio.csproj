@@ -58,6 +58,7 @@
     <Compile Include="src\Orbis.cs" />
     <Compile Include="src\PkgName.cs" />
     <Compile Include="src\PkgFast.cs" />
+    <Compile Include="src\PkgNeeded.cs" />
     <Compile Include="src\IconBuilder.cs" />
     <Compile Include="src\Sqlite3.cs" />
     <Compile Include="src\TrophyEditor.cs" />

@@ -27,6 +27,12 @@ namespace PkgStudio
 
         public static bool Fill(GameItem it)
         {
+            // 先走按需读取：几十 GB 的包只解析条目表 + 读几个小条目，
+            // 不会因为巨型条目 OOM，也不会被 32 位 offset 影响。
+            if (PkgNeeded.Fill(it))
+                return true;
+
+            // 按需读取不支持的加密类型 / 异常包，退回原版全量读取。
             try
             {
                 PS4_Tools.PKG.SceneRelated.Unprotected_PKG pkg =
