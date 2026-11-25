@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -28,6 +27,16 @@ namespace PkgStudio
 
         private const int MAX_TARGET_SIZE = 64 * 1024 * 1024;
         private const int ENTRY_SIZE = 32;
+
+        // 零售 PKG key3 的 RSA 私钥，与原版 PS4_Tools.Util.PS4Keys 里的值一致。
+        // 这些字节在程序集里是 FieldRVA 的特殊值类型，反射取不到 byte[]，所以直接写死。
+        private const string RSA_P = "f967ad9912310c56a22e161c46b34d5b43be42a2f686968042c3c73fc342f58749339f075d6e2c04fde3e1b2ae0a0cf0c7a61ca16350c8099c5124526c5e5ebd1e2706bbbc9e94e135d46db3cb3c68dd68b3fe6ccb8d8220762363b7e96810014edcba275d01c12d805e2baf826bd884b6105286a7898eae9ae289c6f7d587fb";
+        private const string RSA_Q = "d7a10f9a8bf2c91195329a8cf0d94047f568a00dbdc1fc432f65f9c3610f257754add758ac8440608d3ff3658975b5c62c511a2f1f22e4431154bec9b4c7b51b050bbc569acd4ad973685e5cfb92b78b0dfff507cab4c89b963c079e3e6b2a11f28ab18ad72e1ba5532406ed50b89067b1e241c69201ee10f061bbfbb27d4a73";
+        private const string RSA_MODULUS = "d212fc335f6ddb831609628b0356273782d477853529392d526b8c4c8cfb06c1845be7d4f7bcd24e6245cd2abbd77776453655273fb3f5f98eda4befaa59aeb39bea5498d206326a58312ae0d44f90b50a7decf43a9c52672d99318e0c43e682fe0746e12e50d41f2d2f7ed908ba06b3bf2e203f4e3ffe44ffaa50435791699449158282e40f4c8d9d2cc95b1d64bf888bd4c594e76547841ee57910fb989347b97d8512a640982cf792bc951932ede890560d65c1aa78c62e54fd5f54a1f67ee5e05f61c120b4b9b4330870e4df8956ed012946775f8cb8a9f51e2eb3b9bfe009b78d28d4a6c3b81e1f07ebb4120b95b88530fddc3913d07cdc8fedf9c9a3c1";
+        private const string RSA_D = "32d903908fbdb08f572b285e0b8db3ea5cd17ea890888cdd6a80bbb1dfc1f70daa32f0b77ccb88800e8b64b0be4cd60e9b8c1e2a64e1f35cd77601415e935c94fedd4662c31b5ae2a0bc2debc3980aa7b7856970682b644ab31fcc7ddc7c26f477f65cf2ae5a442dd3ab16620419bafb90ffe23050896ecb56b2ebc09116925e308eaec7945dfd35e120f8ad3ebc08bfc036749fd5bb5208fd0666f37ab304f475295de95faa1030b20f5a1ac12ab3fecb21ad80ec8f20091cdbc55894c29cc6ce82653e5790bca98b06b4f072f677df9864f1ecfe372dbcae8c08811fc3c9891ac742824b2edc8e8d73ceb1cc01d90870873c4408ec498f815ae240ff77fc0d";
+        private const string RSA_DP = "52cc2da09c9e75e728ee3ddee345d14f941cccc88729453b8d6eab6e2aa7c71543a3048f905febf3384a77fa36b71576b6011a8e258782f155d8c6432ac0e598c932d1946fd901ba0681e06d88f2242a2501645cbff2d999673ef672eee4e2335cf80040e32a9af43d2286443cfb0aa57c3fccf5f116c4ac88b4de6294926a13";
+        private const string RSA_DQ = "7c9dad39e0d560149448197f8895d58b80ad858a4b773785d077bbbf89714a72cb726838ec02c67dc6440633511cc0ff958f0d75dc25bb0b7391a96d42d803b768d41e7562a37035797800c8f5ef15b9fc4e475ac870705b5298c0c2584a7096ccb810e12f788b2ba17ff9acdef0bb2be266e3229231215792c4b8f23e762037";
+        private const string RSA_INVERSEQ = "459755d422085ef35cb4057afdaa4242ad9a8ca06cbb1d6854546e3e32e3537376f13e01ead3cfebeb233ec0beceec2c895fa8273a4cb7e674bc454c26c825ff34632537e14810c193a6afebbae3a2f13def63d8f4fdd3eee25de933ccadba755c85afcea93dd1a217f3f698b3508e5ef6eb028ea162a7d62cec91ff1540d2e3";
 
         private sealed class Entry
         {
@@ -205,23 +214,16 @@ namespace PkgStudio
             return result;
         }
 
-        /// <summary>从 PS4_Tools.dll 里取零售 RSA 私钥（类型是 internal，只能反射）。</summary>
         private static byte[] RsaDecryptKey3(byte[] encrypted)
         {
-            Assembly asm = typeof(PS4_Tools.PKG.SceneRelated.Unprotected_PKG).Assembly;
-            // 密钥字节在编译生成的 <PrivateImplementationDetails> 类型里（字段名就是十六进制值），
-            // RSA_PKG_Meta 只是把它们组装成 RSAParameters 的壳。
-            Type t = asm.GetType("<PrivateImplementationDetails>", false);
-            if (t == null) throw new Exception("找不到 <PrivateImplementationDetails>");
-
             RSAParameters p = new RSAParameters();
-            p.P = KeyBytes(t, "C1D52ECFD111255EE610C500024CFEA769DDD62E");
-            p.Q = KeyBytes(t, "E89E82AE8092066A5868DFA1219481CBB7897C0B");
-            p.Modulus = KeyBytes(t, "9519D939497C79C3633E03861BE500D3570781C5");
-            p.D = KeyBytes(t, "5402B87C40B40C0528A1836FC77B1F0B8E85DE80");
-            p.DP = KeyBytes(t, "AC6F6DFDBC7A74B9F955875CF9B2783F7BE3E475");
-            p.DQ = KeyBytes(t, "EA1E8BD1E1381DB9E0B4481E26D6CBCB7F8BA611");
-            p.InverseQ = KeyBytes(t, "1826B7521D2CCA38E28B9E70FB04D6B656F53015");
+            p.P = HexBytes(RSA_P);
+            p.Q = HexBytes(RSA_Q);
+            p.Modulus = HexBytes(RSA_MODULUS);
+            p.D = HexBytes(RSA_D);
+            p.DP = HexBytes(RSA_DP);
+            p.DQ = HexBytes(RSA_DQ);
+            p.InverseQ = HexBytes(RSA_INVERSEQ);
             p.Exponent = new byte[] { 0x00, 0x01, 0x00, 0x01 };
 
             using (RSACryptoServiceProvider rsa = new RSACryptoServiceProvider())
@@ -231,21 +233,12 @@ namespace PkgStudio
             }
         }
 
-        private static byte[] KeyBytes(Type t, string name)
+        private static byte[] HexBytes(string s)
         {
-            FieldInfo f = t.GetField(name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-            if (f == null) throw new Exception("缺少 RSA 参数 " + name);
-            object v = f.GetValue(null);
-            if (v is byte[]) return (byte[])v;
-            string s = v as string;
-            if (s != null)
-            {
-                byte[] b = new byte[s.Length / 2];
-                for (int i = 0; i < b.Length; i++)
-                    b[i] = Convert.ToByte(s.Substring(i * 2, 2), 16);
-                return b;
-            }
-            throw new Exception("RSA 参数类型不认识: " + name);
+            byte[] b = new byte[s.Length / 2];
+            for (int i = 0; i < b.Length; i++)
+                b[i] = Convert.ToByte(s.Substring(i * 2, 2), 16);
+            return b;
         }
 
         private static byte[] ReadAt(FileStream fs, long offset, int count)
