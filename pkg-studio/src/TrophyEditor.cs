@@ -28,6 +28,8 @@ namespace PkgStudio
     internal class TrophyEditor : Form
     {
         private const string DB_REMOTE = "/user/home/10000000/trophy/db/trophy_local.db";
+        /// <summary>备份统一放这里，方便一次性删除（不进奖杯目录，避免和系统文件混在一起）。</summary>
+        private const string BACKUP_DIR = "/data/trophy_bak";
         private static readonly string[] UIDS = { "10000000", "10000002", "10000004", "1d8fccf0" };
 
         private TextBox txtHost;
@@ -69,7 +71,7 @@ namespace PkgStudio
             BuildUi();
             if (!string.IsNullOrWhiteSpace(host)) txtHost.Text = host.Trim();
             Log("提示：先点「连接并读取」，选游戏 → 选奖杯 → 填时间 → 写入 PS4");
-            Log("安全：只改解锁状态和时间，不动身份字段；写入前自动在主机备份 db");
+            Log("安全：只改解锁状态和时间，不动身份字段；备份统一放 " + BACKUP_DIR + "/");
         }
 
         private void BuildUi()
@@ -269,6 +271,28 @@ namespace PkgStudio
             using (FtpWebResponse resp = (FtpWebResponse)r.GetResponse())
                 if (resp.StatusCode != FtpStatusCode.CommandOK && resp.StatusCode != FtpStatusCode.ClosingData)
                     throw new Exception("上传返回 " + resp.StatusCode);
+        }
+
+        private static bool FtpExists(string host, string remote)
+        {
+            try
+            {
+                FtpWebRequest r = Req(host, remote, WebRequestMethods.Ftp.GetFileSize);
+                using (FtpWebResponse resp = (FtpWebResponse)r.GetResponse()) { }
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>创建目录；已存在时多数 FTP 返回 550，直接忽略。</summary>
+        private static void FtpMkdir(string host, string remoteDir)
+        {
+            try
+            {
+                FtpWebRequest r = Req(host, remoteDir, WebRequestMethods.Ftp.MakeDirectory);
+                using (FtpWebResponse resp = (FtpWebResponse)r.GetResponse()) { }
+            }
+            catch { }
         }
 
         /// <summary>找一个存在 trophy/db 目录的 uid（多数机器是 10000000）。</summary>
@@ -535,7 +559,7 @@ namespace PkgStudio
             if (MessageBox.Show(this,
                 "将写入游戏 [" + selectedNp + "]：\n" +
                 "  " + rows.Count + " 个奖杯中，" + unlockCount + " 个标记为已解锁（含手动/导入的时间）\n\n" +
-                "写入前会自动在 PS4 上备份数据库。\n" +
+                "写入前会自动备份数据库到 " + BACKUP_DIR + "/ 。\n" +
                 "只改解锁状态和时间，不动身份字段。\n\n" +
                 "确认写入？", "写入 PS4", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                 return;
@@ -550,14 +574,16 @@ namespace PkgStudio
                     string uid = FindUid(host);
                     string remote = "/user/home/" + uid + "/trophy/db/trophy_local.db";
                     string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                    string backup = remote + ".bak-trophyedit-" + stamp;
+                    // 备份统一放 /data/trophy_bak/，不污染奖杯目录，方便日后一次性删除
+                    string backup = BACKUP_DIR + "/trophy_local_" + selectedNp + "_" + stamp + ".db";
 
                     // 1) 从主机再下一份最新的，避免覆盖期间别人的写入
                     string fresh = Path.Combine(Path.GetDirectoryName(localDb), "fresh_" + stamp + ".db");
                     FtpDownload(host, remote, fresh);
                     Log("已下载主机最新 db 用于合并写入");
 
-                    // 2) 主机留备份
+                    // 2) 主机留备份（目录不存在就先建）
+                    FtpMkdir(host, BACKUP_DIR);
                     FtpUpload(host, backup, fresh);
                     Log("主机备份: " + backup);
 
@@ -567,6 +593,10 @@ namespace PkgStudio
                         // 确认游戏记录存在（必须是系统注册过的真实记录）
                         string exists = db.Scalar("SELECT COUNT(*) FROM tbl_trophy_title WHERE trophy_title_id='" + Esc(selectedNp) + "'");
                         if (exists != "1") throw new Exception("游戏记录不存在或重复，拒绝写入（请先启动一次游戏让系统注册）");
+
+                        // 奖杯数据卷必须已由系统初始化，否则写了也会被按空卷覆盖
+                        if (!FtpExists(host, "/user/home/" + uid + "/trophy/data/" + selectedNp + "/trophy.img"))
+                            throw new Exception("该游戏还没有 trophy.img（系统未初始化奖杯数据）。\n请先启动一次这个游戏，退出后再写入。");
 
                         foreach (TrophyRow r in rows)
                         {
