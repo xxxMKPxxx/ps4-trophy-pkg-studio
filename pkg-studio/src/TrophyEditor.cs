@@ -22,7 +22,14 @@ namespace PkgStudio
     ///   改了服务会判定记录与 conf/img 不符，整体重建（第一次实验就是这样失败的）。
     ///   实测：只改上述字段，重启 + 打开奖杯页后均保持，UI 显示自定义时间。
     ///
-    /// ★ 写入前必定在主机留 .bak 备份；只处理用户明确选中的游戏/奖杯。
+    /// ★ 写入后必须完整重启 PS4（关机再开），且**绝对不要先启动这个游戏**。
+    ///   实测（2026-11-26 Flower / NPWR05426_00）：写完 db 后进了游戏找奖杯，
+    ///   游戏启动瞬间按 trophy.img 的旧状态重建了奖杯数据，67 秒内把统计清回 0%；
+    ///   同样的写入 + 完整重启（不碰游戏）就保持 100%。
+    ///   原因：进游戏会触发主机初始化/重写 trophy data 卷，而它取的是内存里 img 的现状。
+    ///   同理，只切到奖杯应用而不重启也可能被内存缓存覆盖——重启是唯一可靠路径。
+    ///
+    /// ★ 写入前必定在 /data/trophy_bak/ 留 .bak 备份；只处理用户明确选中的游戏/奖杯。
     /// ★ 不改 trophy.img（加密卷），不连 PSN（服务器是最终裁决）。
     /// </summary>
     internal class TrophyEditor : Form
@@ -72,6 +79,7 @@ namespace PkgStudio
             if (!string.IsNullOrWhiteSpace(host)) txtHost.Text = host.Trim();
             Log("提示：先点「连接并读取」，选游戏 → 选奖杯 → 填时间 → 写入 PS4");
             Log("安全：只改解锁状态和时间，不动身份字段；备份统一放 " + BACKUP_DIR + "/");
+            Log("重要：写入后要完整重启 PS4，重启前别启动该游戏，否则进度会被清回 0");
         }
 
         private void BuildUi()
@@ -561,6 +569,8 @@ namespace PkgStudio
                 "  " + rows.Count + " 个奖杯中，" + unlockCount + " 个标记为已解锁（含手动/导入的时间）\n\n" +
                 "写入前会自动备份数据库到 " + BACKUP_DIR + "/ 。\n" +
                 "只改解锁状态和时间，不动身份字段。\n\n" +
+                "★ 写入后请【完整重启 PS4】，重启前不要启动这个游戏。\n" +
+                "游戏一启动就会按旧 img 重建奖杯数据，刚写的解锁会被清回 0。\n\n" +
                 "确认写入？", "写入 PS4", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                 return;
 
@@ -636,12 +646,17 @@ namespace PkgStudio
                         if (ic != "ok") throw new Exception("写入后完整性校验失败: " + ic);
                     }
                     FtpUpload(host, remote, fresh);
-                    Log("✅ 写入完成。请重启 PS4 或打开奖杯页验证。");
+                    Log("✅ 写入完成。现在请完整重启 PS4，重启前不要启动该游戏（否则会被 img 清回 0）。");
                     BeginInvoke(new Action(() =>
                     {
                         dirty = false;
                         Status("写入完成");
-                        ShowInfo("写入完成！\n\n请重启 PS4 或打开奖杯页查看。\n如想撤销：主机上有备份 " + backup, "完成");
+                        ShowInfo("写入完成！\n\n" +
+                                 "① 现在【完整重启 PS4】（关机再开，不要待机）\n" +
+                                 "② 重启前不要启动这个游戏，也不要点开奖杯应用\n" +
+                                 "   游戏一启动就会按旧 img 重建奖杯数据，进度会被清回 0\n" +
+                                 "③ 开机后再打开奖杯应用查看\n\n" +
+                                 "如想撤销：主机备份在 " + backup, "完成");
                     }));
                 }
                 catch (Exception ex)
