@@ -219,8 +219,9 @@ namespace PkgStudio
 
         private void Status(string s)
         {
+            // ToolStripStatusLabel 不是 Control，没有 InvokeRequired——用 Form 自己判断
             if (!IsHandleCreated) return;
-            if (lblStatus.InvokeRequired) { lblStatus.BeginInvoke(new Action(() => lblStatus.Text = s)); return; }
+            if (InvokeRequired) { BeginInvoke(new Action(() => lblStatus.Text = s)); return; }
             lblStatus.Text = s;
         }
 
