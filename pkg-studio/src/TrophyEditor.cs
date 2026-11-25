@@ -41,7 +41,7 @@ namespace PkgStudio
 
         private TextBox txtHost;
         private Button btnConnect;
-        private ComboBox cmbGame;
+        private ListBox lstGame;
         private DataGridView grid;
         private TextBox txtTime;
         private DateTimePicker dtp;
@@ -49,6 +49,7 @@ namespace PkgStudio
         private Button btnImport;
         private Button btnWrite;
         private CheckBox chkPlatinum;
+        private CheckBox chkKeepTime;
         private ToolStripStatusLabel lblStatus;
         private TextBox txtLog;
 
@@ -64,6 +65,9 @@ namespace PkgStudio
             public bool Unlocked;
             public string Time;       // PS4 格式 "2024-03-15T12:34:56.00Z"
             public string Revision;   // 只读，展示用
+            // 读取时主机上的原始状态：勾了「已解锁不覆盖时间」就靠它判断要不要跳过
+            public bool OrigUnlocked;
+            public string OrigTime;
         }
         private readonly List<TrophyRow> rows = new List<TrophyRow>();
 
@@ -71,7 +75,7 @@ namespace PkgStudio
         {
             Text = "连接解锁 · PS4 奖杯时间戳编辑";
             ClientSize = new Size(1060, 720);
-            MinimumSize = new Size(880, 560);
+            MinimumSize = new Size(1040, 640);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Microsoft YaHei UI", 9f);
 
@@ -106,20 +110,27 @@ namespace PkgStudio
             top.Controls.Add(btnConnect);
             top.Controls.Add(btnRefresh);
 
-            // ---- 主体：左游戏下拉 + 奖杯表；右时间编辑 ----
+            // ---- 主体：左游戏列表 / 中奖杯表 / 右时间编辑 ----
             Panel body = new Panel();
             body.Dock = DockStyle.Fill;
             body.Padding = new Padding(12, 8, 12, 8);
 
+            // ---- 左侧：FTP 扫到的奖杯集列表 ----
             Label gameLbl = new Label { Text = "游戏（奖杯集）", AutoSize = true, Location = new Point(14, 8) };
-            cmbGame = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Location = new Point(110, 5) };
-            cmbGame.SelectedIndexChanged += OnGameChanged;
+            lstGame = new ListBox();
+            lstGame.Location = new Point(14, 30);
+            lstGame.Size = new Size(252, 570);
+            lstGame.IntegralHeight = false;
+            lstGame.BorderStyle = BorderStyle.FixedSingle;
+            lstGame.HorizontalScrollbar = true;
+            lstGame.SelectedIndexChanged += OnGameChanged;
             body.Controls.Add(gameLbl);
-            body.Controls.Add(cmbGame);
+            body.Controls.Add(lstGame);
 
+            // ---- 中间：奖杯明细 ----
             grid = new DataGridView();
-            grid.Location = new Point(14, 40);
-            grid.Size = new Size(700, 500);
+            grid.Location = new Point(276, 30);
+            grid.Size = new Size(474, 570);
             grid.AllowUserToAddRows = false;
             grid.AllowUserToDeleteRows = false;
             grid.ReadOnly = true;
@@ -128,55 +139,63 @@ namespace PkgStudio
             grid.MultiSelect = false;
             grid.BackgroundColor = Color.White;
             grid.BorderStyle = BorderStyle.FixedSingle;
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "id", HeaderText = "ID", Width = 44 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "grade", HeaderText = "等级", Width = 48 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "title", HeaderText = "奖杯名称", Width = 260 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "unlocked", HeaderText = "状态", Width = 64 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "time", HeaderText = "解锁时间 (UTC)", Width = 180 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "id", HeaderText = "ID", Width = 40 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "grade", HeaderText = "等级", Width = 42 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "title", HeaderText = "奖杯名称", Width = 180 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "unlocked", HeaderText = "状态", Width = 56 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "time", HeaderText = "解锁时间 (UTC)", Width = 136 });
             grid.SelectionChanged += OnRowSelected;
             body.Controls.Add(grid);
 
             // 右侧编辑区
-            int rx = 730;
-            Label editLbl = new Label { Text = "时间编辑（本机时区，写入自动转 UTC）", AutoSize = true, Location = new Point(rx, 40) };
+            int rx = 762;
+            Label editLbl = new Label { Text = "时间编辑（本机时区，写入自动转 UTC）", AutoSize = true, Location = new Point(rx, 30) };
             body.Controls.Add(editLbl);
 
-            Label dateLbl = new Label { Text = "日期", AutoSize = true, Location = new Point(rx, 74) };
-            dtp = new DateTimePicker { Format = DateTimePickerFormat.Short, Location = new Point(rx + 46, 70), Width = 150 };
+            Label dateLbl = new Label { Text = "日期", AutoSize = true, Location = new Point(rx, 64) };
+            dtp = new DateTimePicker { Format = DateTimePickerFormat.Short, Location = new Point(rx + 46, 60), Width = 150 };
             body.Controls.Add(dateLbl);
             body.Controls.Add(dtp);
 
-            Label timeLbl = new Label { Text = "时间", AutoSize = true, Location = new Point(rx, 108) };
-            txtTime = new TextBox { Text = "12:34:56", Width = 100, Location = new Point(rx + 46, 104), BorderStyle = BorderStyle.FixedSingle };
+            Label timeLbl = new Label { Text = "时间", AutoSize = true, Location = new Point(rx, 98) };
+            txtTime = new TextBox { Text = "12:34:56", Width = 100, Location = new Point(rx + 46, 94), BorderStyle = BorderStyle.FixedSingle };
             body.Controls.Add(timeLbl);
             body.Controls.Add(txtTime);
 
-            Label fmtLbl = new Label { Text = "格式 HH:mm:ss（24小时制）", AutoSize = true, ForeColor = Color.Gray, Location = new Point(rx + 152, 108) };
+            Label fmtLbl = new Label { Text = "格式 HH:mm:ss（24小时制）", AutoSize = true, ForeColor = Color.Gray, Location = new Point(rx + 152, 98) };
             body.Controls.Add(fmtLbl);
 
             btnApplyTime = MakeBtn("应用到选中奖杯", true);
-            btnApplyTime.Location = new Point(rx, 146);
+            btnApplyTime.Location = new Point(rx, 136);
             btnApplyTime.Click += OnApplyTime;
             body.Controls.Add(btnApplyTime);
 
-            chkPlatinum = new CheckBox { Text = "白金杯也可解锁（谨慎）", AutoSize = true, Location = new Point(rx, 188), Checked = false };
+            chkPlatinum = new CheckBox { Text = "白金杯也可解锁（谨慎）", AutoSize = true, Location = new Point(rx, 178), Checked = false };
             body.Controls.Add(chkPlatinum);
 
+            chkKeepTime = new CheckBox();
+            chkKeepTime.Text = "已解锁不覆盖时间（保留原有时间）";
+            chkKeepTime.AutoSize = true;
+            chkKeepTime.Checked = true;
+            chkKeepTime.Location = new Point(rx, 204);
+            chkKeepTime.CheckedChanged += delegate { RedrawRows(); };
+            body.Controls.Add(chkKeepTime);
+
             btnImport = MakeBtn("导入时间 CSV…", false);
-            btnImport.Location = new Point(rx, 224);
+            btnImport.Location = new Point(rx, 234);
             btnImport.Click += OnImport;
             body.Controls.Add(btnImport);
 
             Label tips = new Label();
-            tips.Text = "CSV 格式：ID,YYYY-MM-DD HH:mm:ss\n例：\n1,2024-03-15 12:34:56\n2,2024-03-16 09:00:00\n\n第一行可作表头（含 id/time 字样自动跳过）。\n时间按本机时区，写入转 UTC。\n白金(grade=1)默认跳过，勾选后可解。";
-            tips.Location = new Point(rx, 266);
-            tips.Size = new Size(300, 180);
+            tips.Text = "CSV 每行：ID,YYYY-MM-DD HH:mm:ss\n1,2024-03-15 12:34:56\n2,2024-03-16 09:00:00\n\n首行可作表头，自动跳过。\n时间按本机时区，写入转 UTC。\n白金默认跳过，勾选后可解。\n浅蓝行 = 原本已解锁。";
+            tips.Location = new Point(rx, 274);
+            tips.Size = new Size(290, 140);
             tips.ForeColor = Color.FromArgb(70, 78, 90);
             body.Controls.Add(tips);
 
             btnWrite = MakeBtn("写入 PS4（自动备份）", true);
-            btnWrite.Location = new Point(rx, 470);
-            btnWrite.Size = new Size(300, 42);
+            btnWrite.Location = new Point(rx, 424);
+            btnWrite.Size = new Size(290, 42);
             btnWrite.Click += OnWrite;
             body.Controls.Add(btnWrite);
 
@@ -184,8 +203,8 @@ namespace PkgStudio
             txtLog.Multiline = true;
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.Location = new Point(rx, 526);
-            txtLog.Size = new Size(300, 160);
+            txtLog.Location = new Point(rx, 478);
+            txtLog.Size = new Size(290, 122);
             txtLog.BackColor = Color.FromArgb(250, 250, 250);
             body.Controls.Add(txtLog);
 
@@ -371,7 +390,7 @@ namespace PkgStudio
 
         private void LoadGames()
         {
-            cmbGame.Items.Clear();
+            lstGame.Items.Clear();
             rows.Clear();
             grid.Rows.Clear();
             selectedNp = null;
@@ -384,11 +403,11 @@ namespace PkgStudio
                     string np = t[i][0];
                     string name = t[i][1];
                     string n = t[i][2], u = t[i][3];
-                    cmbGame.Items.Add(new GameEntry(np, name + "  [" + np + "]  " + u + "/" + n));
+                    lstGame.Items.Add(new GameEntry(np, name + "  " + u + "/" + n));
                 }
             }
-            Log("读取到 " + cmbGame.Items.Count + " 个奖杯集");
-            if (cmbGame.Items.Count > 0) cmbGame.SelectedIndex = 0;
+            Log("读取到 " + lstGame.Items.Count + " 个奖杯集");
+            if (lstGame.Items.Count > 0) lstGame.SelectedIndex = 0;
         }
 
         private class GameEntry
@@ -401,9 +420,11 @@ namespace PkgStudio
 
         private void OnGameChanged(object sender, EventArgs e)
         {
-            if (cmbGame.SelectedItem == null) return;
-            selectedNp = ((GameEntry)cmbGame.SelectedItem).Np;
+            if (lstGame.SelectedItem == null) return;
+            GameEntry ge = (GameEntry)lstGame.SelectedItem;
+            selectedNp = ge.Np;
             LoadTrophies();
+            Status(ge.Np + " · " + ge.Label);
         }
 
         private void LoadTrophies()
@@ -424,11 +445,15 @@ namespace PkgStudio
                         Title = t[i][2],
                         Unlocked = t[i][3] == "1",
                         Time = t[i][4],
-                        Revision = t[i][5]
+                        Revision = t[i][5],
+                        OrigUnlocked = t[i][3] == "1",
+                        OrigTime = t[i][4]
                     };
                     rows.Add(r);
-                    grid.Rows.Add(r.TrophyId.ToString(), r.Grade, r.Title,
+                    int idx = grid.Rows.Add(r.TrophyId.ToString(), r.Grade, r.Title,
                         r.Unlocked ? "已解锁" : "未解锁", r.Unlocked ? ToLocal(r.Time) : "");
+                    // 原本就解锁的杯涂成浅蓝：勾了「已解锁不覆盖时间」时这些会被保护
+                    if (r.OrigUnlocked) grid.Rows[idx].DefaultCellStyle.BackColor = Color.FromArgb(232, 240, 254);
                 }
             }
             Status("已载入 " + rows.Count + " 个奖杯");
@@ -499,6 +524,14 @@ namespace PkgStudio
                 }
             }
 
+            if (chkKeepTime.Checked && r.OrigUnlocked)
+            {
+                MessageBox.Show("「" + r.Title + "」在主机上原本就已解锁。\n\n" +
+                                "当前勾选了「已解锁不覆盖时间」，按设置保留原有时间，这次跳过。\n" +
+                                "要改它的时间，请先取消这个勾选。", "已解锁 · 跳过");
+                return;
+            }
+
             r.Unlocked = true;
             r.Time = ToUtc(stamp);
             dirty = true;
@@ -512,12 +545,20 @@ namespace PkgStudio
             return utc.ToString("yyyy-MM-dd'T'HH:mm:ss.00'Z'", CultureInfo.InvariantCulture);
         }
 
+        private void RedrawRows()
+        {
+            for (int i = 0; i < rows.Count && i < grid.Rows.Count; i++) RefreshRow(i);
+        }
+
         private void RefreshRow(int idx)
         {
             TrophyRow r = rows[idx];
             grid.Rows[idx].Cells[3].Value = r.Unlocked ? "已解锁" : "未解锁";
             grid.Rows[idx].Cells[4].Value = r.Unlocked ? ToLocal(r.Time) : "";
-            grid.Rows[idx].DefaultCellStyle.BackColor = r.Unlocked ? Color.FromArgb(235, 250, 235) : Color.White;
+            bool guarded = chkKeepTime.Checked && r.OrigUnlocked;
+            grid.Rows[idx].DefaultCellStyle.BackColor = guarded
+                ? Color.FromArgb(232, 240, 254)
+                : (r.Unlocked ? Color.FromArgb(235, 250, 235) : Color.White);
         }
 
         private void OnImport(object sender, EventArgs e)
@@ -528,7 +569,7 @@ namespace PkgStudio
                 dlg.Filter = "CSV 文件|*.csv|文本文件|*.txt|所有文件|*.*";
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
-                int applied = 0, skipped = 0;
+                int applied = 0, skipped = 0, kept = 0;
                 var lines = File.ReadAllLines(dlg.FileName, Encoding.UTF8);
                 foreach (string raw in lines)
                 {
@@ -544,15 +585,17 @@ namespace PkgStudio
                     TrophyRow r = rows.Find(x => x.TrophyId == id);
                     if (r == null) { skipped++; continue; }
                     if ((r.TrophyId == 0 || r.Grade == "白金") && !chkPlatinum.Checked) { skipped++; continue; }
+                    if (chkKeepTime.Checked && r.OrigUnlocked) { kept++; continue; }   // 原本已解锁：保留原时间
 
                     r.Unlocked = true;
                     r.Time = ToUtc(local);
                     applied++;
                     RefreshRow(rows.IndexOf(r));
                 }
-                dirty = applied > 0;
-                Log("导入完成: 应用 " + applied + " 条, 跳过 " + skipped + " 条");
-                MessageBox.Show("导入完成：应用 " + applied + " 条，跳过 " + skipped + " 条", "导入 CSV");
+                if (applied > 0) dirty = true;
+                string keepNote = kept > 0 ? ("\n其中 " + kept + " 条原本已解锁，按「已解锁不覆盖时间」保留原时间。") : "";
+                Log("导入完成: 应用 " + applied + " 条, 跳过 " + skipped + " 条, 保留已解锁 " + kept + " 条");
+                MessageBox.Show("导入完成：应用 " + applied + " 条，跳过 " + skipped + " 条。" + keepNote, "导入 CSV");
             }
         }
 
@@ -564,9 +607,11 @@ namespace PkgStudio
             if (!dirty) { MessageBox.Show("没有任何改动，不用写入"); return; }
 
             int unlockCount = rows.FindAll(r => r.Unlocked).Count;
+            int keepCount = chkKeepTime.Checked ? rows.FindAll(r => r.OrigUnlocked).Count : 0;
             if (MessageBox.Show(this,
                 "将写入游戏 [" + selectedNp + "]：\n" +
-                "  " + rows.Count + " 个奖杯中，" + unlockCount + " 个标记为已解锁（含手动/导入的时间）\n\n" +
+                "  " + rows.Count + " 个奖杯中，" + unlockCount + " 个标记为已解锁（含手动/导入的时间）\n" +
+                (keepCount > 0 ? "  其中 " + keepCount + " 个原本已解锁，将保留原时间不覆盖\n" : "") + "\n" +
                 "写入前会自动备份数据库到 " + BACKUP_DIR + "/ 。\n" +
                 "只改解锁状态和时间，不动身份字段。\n\n" +
                 "★ 写入后请【完整重启 PS4】，重启前不要启动这个游戏。\n" +
@@ -608,8 +653,18 @@ namespace PkgStudio
                         if (!FtpExists(host, "/user/home/" + uid + "/trophy/data/" + selectedNp + "/trophy.img"))
                             throw new Exception("该游戏还没有 trophy.img（系统未初始化奖杯数据）。\n请先启动一次这个游戏，退出后再写入。");
 
+                        // 以写入这一刻主机上的实际状态为准（读完到写之间可能又有变化）
+                        var curUnlocked = new Dictionary<int, bool>();
+                        var ct = db.Query("SELECT trophyid, unlocked FROM tbl_trophy_flag WHERE trophy_title_id='" + Esc(selectedNp) + "'");
+                        for (int i = 1; i < ct.Count; i++)
+                            curUnlocked[int.Parse(ct[i][0])] = ct[i][1] == "1";
+
+                        int keptRows = 0;
                         foreach (TrophyRow r in rows)
                         {
+                            bool wasUnlocked = curUnlocked.ContainsKey(r.TrophyId) && curUnlocked[r.TrophyId];
+                            // 勾了「已解锁不覆盖时间」：主机上已解锁的杯原样保留
+                            if (chkKeepTime.Checked && wasUnlocked) { keptRows++; continue; }
                             if (!r.Unlocked) continue;
                             // ★ 只改 unlocked + 两个时间字段；revision 等一概不动
                             db.Exec("UPDATE tbl_trophy_flag SET unlocked=1, " +
@@ -618,12 +673,18 @@ namespace PkgStudio
                                     "WHERE trophy_title_id='" + Esc(selectedNp) + "' AND trophyid=" + r.TrophyId);
                         }
 
-                        // title 统计字段：按 grade 重算
-                        int unlocked = rows.FindAll(r => r.Unlocked).Count;
-                        int plat = rows.FindAll(r => r.Unlocked && r.Grade == "白金").Count;
-                        int gold = rows.FindAll(r => r.Unlocked && r.Grade == "金").Count;
-                        int silver = rows.FindAll(r => r.Unlocked && r.Grade == "银").Count;
-                        int bronze = rows.FindAll(r => r.Unlocked && r.Grade == "铜").Count;
+                        // title 统计字段：按「写入后的实际解锁集合」重算（含主机上原本已解锁的）
+                        int unlocked = 0, plat = 0, gold = 0, silver = 0, bronze = 0;
+                        foreach (TrophyRow r in rows)
+                        {
+                            bool on = r.Unlocked || (curUnlocked.ContainsKey(r.TrophyId) && curUnlocked[r.TrophyId]);
+                            if (!on) continue;
+                            unlocked++;
+                            if (r.Grade == "白金") plat++;
+                            else if (r.Grade == "金") gold++;
+                            else if (r.Grade == "银") silver++;
+                            else if (r.Grade == "铜") bronze++;
+                        }
                         // progress 用整数百分比
                         int total = rows.Count;
                         int progress = total > 0 ? (int)Math.Round(unlocked * 100.0 / total) : 0;
@@ -637,6 +698,7 @@ namespace PkgStudio
                                 ", sync_pending_num=" + unlocked +
                                 " WHERE trophy_title_id='" + Esc(selectedNp) + "'");
                         Log("统计: " + unlocked + "/" + total + " = " + progress + "%");
+                        if (keptRows > 0) Log("保留原时间: " + keptRows + " 个原本已解锁的奖杯未覆盖");
                     }
 
                     // 4) 校验完整性后上传
